@@ -10,5 +10,5 @@ app = FastAPI()
 
 @app.post("/invoke")
 async def invoke(req: InvokeRequest):
-    result = graph.invoke({"user_input": req.user_input})
+    result = await graph.ainvoke({"user_input": req.user_input})
     return result
