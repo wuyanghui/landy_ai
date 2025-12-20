@@ -6,6 +6,8 @@ dependencies = [
     "pydantic",
     "langgraph",
     "typing-extensions",
+    "langchain-openai",
+    "python-dotenv",
 ]
 
 [project.scripts]
