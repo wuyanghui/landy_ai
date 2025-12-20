@@ -1,3 +1,13 @@
+[project]
+name = "landy_ai"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "pydantic",
+    "langgraph",
+    "typing-extensions",
+]
+
 [project.scripts]
 app = "src.index:app"
 
