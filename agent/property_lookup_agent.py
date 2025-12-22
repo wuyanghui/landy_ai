@@ -4,12 +4,7 @@ from schema.schema import FinalOutput, OverallState
 from langgraph.types import Command
 from langgraph.graph import END
 from utility.llm_init import llm
-import json
-
-# Open the file in read mode ('r')
-with open('listing.json', 'r') as file:
-    # Use json.load() to convert the file content to a Python dictionary
-    listing = json.load(file)
+from utility.property_listing_init import get_property_listing
 
 def Property_Lookup_Agent(state: OverallState):
     property_search_prompt = get_property_search_prompt()
@@ -23,7 +18,7 @@ def Property_Lookup_Agent(state: OverallState):
 
     chain = template | llm.with_structured_output(FinalOutput)
     response = chain.invoke({
-        "listing": listing,
+        "listing": get_property_listing(),
         "user_preferences": state['preferences'],
     })
 
