@@ -1,7 +1,7 @@
 {
   "version": 2,
   "builds": [
-    { "src": "src/index.py", "use": "@vercel/python" }
+    { "src": "src/index.py", "use": "@vercel/python@2.0.20", "config": { "pythonVersion": "3.11" } }
   ],
   "routes": [
     { "src": "/(.*)", "dest": "src/index.py" }

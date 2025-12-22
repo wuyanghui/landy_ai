@@ -1,7 +1,23 @@
-from pymongo.mongo_client import MongoClient
+import logging
 import os
+import sys
+from importlib import util as importlib_util
 from urllib.parse import quote
+
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+
+try:
+    from pymongo.mongo_client import MongoClient
+except ModuleNotFoundError as exc:
+    logger.error("Failed to import pymongo.mongo_client: %s", exc)
+    logger.info("Python executable: %s", sys.executable)
+    logger.info("sys.path entries: %s", sys.path)
+    logger.info("importlib.util.find_spec('pymongo') returned: %s", importlib_util.find_spec("pymongo"))
+    raise
 
 load_dotenv()
 db_password = os.environ.get("MONGODB_PW")
