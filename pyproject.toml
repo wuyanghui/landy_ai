@@ -8,6 +8,8 @@ dependencies = [
     "typing-extensions",
     "langchain-openai",
     "python-dotenv",
+    "pymongo",
+    "pytest",
 ]
 
 [project.scripts]
