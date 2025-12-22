@@ -24,7 +24,7 @@ if db_password:
 else:
     print("Error: DB_PASSWORD environment variable not set. Cannot connect to MongoDB.")
 
-def get_property_listing(client):
+def get_property_listing():
     db = client['property']
     collection = db['property-listing']
     documents = list(collection.find({}))

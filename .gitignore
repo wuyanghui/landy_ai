@@ -1,6 +1,7 @@
 venv
 .venv
 .env
+venv312
 test.py
 
 # Ignore Python cache directories
