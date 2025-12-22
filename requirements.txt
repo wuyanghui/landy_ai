@@ -10,6 +10,7 @@ comm==0.2.3
 debugpy==1.8.19
 decorator==5.2.1
 distro==1.9.0
+dnspython==1.16.0
 executing==2.2.1
 fastapi==0.125.0
 h11==0.16.0
@@ -47,6 +48,7 @@ pure_eval==0.2.3
 pydantic==2.12.5
 pydantic_core==2.41.5
 Pygments==2.19.2
+pymongo==3.11.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
 PyYAML==6.0.3
