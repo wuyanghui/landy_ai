@@ -2,8 +2,6 @@ from schema.schema import OverallState
 from langgraph.graph import StateGraph, START, END
 from agent.landy_agent import Landy_Planner
 from agent.property_lookup_agent import Property_Lookup_Agent
-from pydantic import BaseModel
-from fastapi import FastAPI
 
 builder = StateGraph(OverallState)
 builder.add_node("Landy_Planner", Landy_Planner)
