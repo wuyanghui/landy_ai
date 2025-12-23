@@ -1,6 +1,6 @@
 # Landy AI API
 
-Base URL: `https://<your-domain>/`
+Base URL: `https://landy-ai.vercel.app`
 
 ## Endpoints
 
