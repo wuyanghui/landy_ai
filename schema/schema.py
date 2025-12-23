@@ -1,6 +1,7 @@
 from typing_extensions import TypedDict, Literal, Dict, Optional, List
 
 class OverallState(TypedDict):
+    state_id: str
     user_input: str
     preferences: Optional[Dict[str, str]]
     recommended_listing: Optional[List["Listing"]]
