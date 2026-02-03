@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from schema.schema import FinalOutput, OverallState
 from langgraph.types import Command
 from langgraph.graph import END
-from utility.llm_init import llm
+from utility.llm_init import load_llm
 from utility.property_listing_init import get_property_listing
 
 def Property_Lookup_Agent(state: OverallState):
@@ -16,7 +16,7 @@ def Property_Lookup_Agent(state: OverallState):
         ]
     )
 
-    chain = template | llm.with_structured_output(FinalOutput)
+    chain = template | load_llm.with_structured_output(FinalOutput)
     response = chain.invoke({
         "listing": get_property_listing(),
         "user_preferences": state['preferences'],

@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from schema.schema import Planner, OverallState
 from langgraph.types import Command
 from langgraph.graph import END
-from utility.llm_init import llm
+from utility.llm_init import load_llm
 
 def Landy_Planner(state: OverallState):
     user_input = state['user_input']
@@ -17,7 +17,7 @@ def Landy_Planner(state: OverallState):
         ]
     )
 
-    chain = template | llm.with_structured_output(Planner)
+    chain = template | load_llm.with_structured_output(Planner)
 
     response = chain.invoke({
         "user_input": user_input
