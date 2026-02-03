@@ -16,7 +16,13 @@ class InvokeRequest(BaseModel):
     user_input: str
     state_id: Optional[str] = None
 
-app = FastAPI(title="Property Search Agent API")
+app = FastAPI(
+    title="Property Search Agent API",
+    description="Property Search Agent API",
+    version="2.0.0",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json"
+    )
 
 DB_URI = 'postgresql://neondb_owner:npg_0tVuL1ygDCPa@ep-old-dust-a1ymzy94-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require'
 
