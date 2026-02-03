@@ -179,31 +179,23 @@ async def chat_endpoint(request: ChatRequestDict):
                                 _serialize_public_listing(doc) for doc in documents
                             ]
         
-        # Build response dict
-        response: ChatResponseDict = {
+        # Return as JSONResponse with json.dumps
+        return json.dumps({
             "thread_id": thread_id,
             "graph_output": graph_output,
             "preferences": preferences,
             "recommended_listings": recommended_listings,
             "status": "success"
-        }
-        
-        # Return as JSONResponse with json.dumps
-        return JSONResponse(
-            content=json.loads(json.dumps(response, default=str)),
-            status_code=200
-        )
+        })
     
     except Exception as e:
-        error_response: ErrorResponseDict = {
+        error_response = {
             "thread_id": request.get("thread_id", "unknown"),
             "status": "error",
-            "error": str(e)
+            "error": str(e),
+            "status_code": 500
         }
-        return JSONResponse(
-            content=json.loads(json.dumps(error_response)),
-            status_code=500
-        )
+        return json.dumps(error_response)
     
 @app.get("/api/v2/thread/{thread_id}")
 async def get_thread_history(thread_id: str):
