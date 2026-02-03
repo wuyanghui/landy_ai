@@ -17,7 +17,7 @@ def Landy_Planner(state: OverallState):
         ]
     )
 
-    chain = template | load_llm.with_structured_output(Planner)
+    chain = template | load_llm().with_structured_output(Planner)
 
     response = chain.invoke({
         "user_input": user_input

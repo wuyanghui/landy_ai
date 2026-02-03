@@ -16,7 +16,7 @@ def Property_Lookup_Agent(state: OverallState):
         ]
     )
 
-    chain = template | load_llm.with_structured_output(FinalOutput)
+    chain = template | load_llm().with_structured_output(FinalOutput)
     response = chain.invoke({
         "listing": get_property_listing(),
         "user_preferences": state['preferences'],

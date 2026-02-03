@@ -48,7 +48,7 @@ async def invoke(req: InvokeRequest):
     return result
 
 # TypedDict definitions
-class ChatRequestDict(TypedDict):
+class ChatRequestDict(BaseModel):
     message: str
     thread_id: Optional[str]
 
@@ -87,8 +87,8 @@ class ErrorResponseDict(TypedDict):
     status: str
     error: str
 
-@app.post("/api/v2/chat")
-async def chat_endpoint(request: Dict[str, Any]):
+@app.post("/api/v2/invoke")
+async def chat_endpoint(request: ChatRequestDict):
     """
     Main chat endpoint for property search agent
     
