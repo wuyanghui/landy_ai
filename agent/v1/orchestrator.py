@@ -1,8 +1,8 @@
 from schema.schema import OverallState
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from agent.landy_agent import Landy_Planner
-from agent.property_lookup_agent import Property_Lookup_Agent
+from agent.v1.landy_agent import Landy_Planner
+from agent.v1.property_lookup_agent import Property_Lookup_Agent
 
 builder = StateGraph(OverallState)
 builder.add_node("Landy_Planner", Landy_Planner)

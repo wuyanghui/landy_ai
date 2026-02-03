@@ -54,6 +54,12 @@ def reset_client_for_tests() -> None:
 def get_property_listing():
     client = _ensure_client()
     db = client["property"]
-    collection = db["property-listing"]
+    collection = db["property_listing"]
     documents = list(collection.find({}))
     return documents
+
+def get_property_listing_collections():
+    client = _ensure_client()
+    db = client["property"]
+    collection = db["property_listing"]
+    return collection

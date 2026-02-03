@@ -1,4 +1,4 @@
-from typing_extensions import TypedDict, Literal, Dict, Optional, List
+from typing_extensions import TypedDict, Literal, Dict, Optional, List, Any
 
 class OverallState(TypedDict):
     state_id: str
@@ -6,6 +6,7 @@ class OverallState(TypedDict):
     preferences: Optional[Dict[str, str]]
     recommended_listing: Optional[List["Listing"]]
     graph_output: str
+    messages: List[Any]
 
 class Preference(TypedDict):
     buy_rent: Optional[Literal['Buy', 'Rent']]

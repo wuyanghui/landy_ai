@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from fastapi import FastAPI
-from agent.orchestrator import graph
+from agent.v1.orchestrator import graph
 
 
 class InvokeRequest(BaseModel):
