@@ -57,6 +57,12 @@ class ChatRequestDict(BaseModel):
     message: str
     thread_id: Optional[str] = None
 
+# FIXED: ChatRequestDict should be BaseModel, not using .get()
+class ChatSlugRequestDict(BaseModel):
+    message: str
+    slug: str
+    thread_id: Optional[str] = None
+
 class FilterPreferencesDict(TypedDict, total=False):
     location: Optional[str]
     price_min: Optional[float]
@@ -91,6 +97,131 @@ class ErrorResponseDict(TypedDict):
     status: str
     error: str
 
+@app.post("/api/v2/invoke/slug")
+async def chat_endpoint(request: ChatSlugRequestDict):
+    """
+    Main chat endpoint for property search agent
+    
+    Args:
+        message: User's search query
+        thread_id: Optional thread ID for conversation continuity
+    
+    Returns:
+        JSON string with thread_id, AI response, preferences, and listings
+    """
+    logger.info(f"Received request: {request}")
+    try:
+        # FIXED: Use Pydantic model attributes instead of .get()
+        message = request.message
+        if not message:
+            logger.error("Empty message received")
+            raise HTTPException(status_code=400, detail="Message is required")
+        
+        # Generate or use existing thread_id
+        thread_id = request.thread_id or str(uuid.uuid4())
+        logger.info(f"Processing message for thread_id: {thread_id}")
+        
+        # Initialize variables
+        graph_output = ""
+        preferences = None
+        recommended_listings = None
+        
+        # STEP 1: Test database connection first
+        logger.info("Testing database connection...")
+        try:
+            with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                checkpointer.setup()
+                logger.info("Database connection successful")
+        except Exception as db_error:
+            logger.error(f"Database connection failed: {str(db_error)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Database connection error: {str(db_error)}")
+        
+        # STEP 2: Try imports
+        logger.info("Importing required modules...")
+        try:
+            from langchain.agents import create_agent
+            from agent.v2.prompt.landy_slug_prompt import get_slug_prompt
+            from utility.property_listing_init import get_property_listing_collections
+            from utility.llm_init import load_llm
+            logger.info("All imports successful")
+        except ImportError as import_error:
+            logger.error(f"Import failed: {str(import_error)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Import error: {str(import_error)}")
+        
+        # STEP 3: Setup agent
+        logger.info("Setting up slug agent...")
+        try:
+            with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                checkpointer.setup()
+                get_property_by_slug = get_property_listing_collections().find_one({"slug": slug})
+                slug_agent = create_agent(
+                    system_prompt=get_slug_prompt(get_property_by_slug),
+                    model=load_llm(model='gpt-4.1'),
+                    checkpointer=checkpointer,
+                )
+                logger.info("Agent created successfully")
+                
+                initial_input = {
+                    "messages": [
+                        {"role": "user", "content": message}
+                    ]
+                }
+                
+                # Stream agent responses
+                logger.info("Starting agent stream...")
+                chunk_count = 0
+                for chunk in slug_agent.stream(
+                    initial_input,
+                    {"configurable": {"thread_id": thread_id}},
+                ):
+                    chunk_count += 1
+                    logger.debug(f"Processing chunk {chunk_count}: {chunk.keys()}")
+                    
+                    # Model (LLM) output
+                    if "model" in chunk:
+                        messages = chunk["model"].get("messages", [])
+                        if messages:
+                            graph_output = messages[0].content
+                            logger.info(f"Model output received: {graph_output[:100]}...")
+                    
+                logger.info(f"Agent stream completed. Processed {chunk_count} chunks")
+        
+        except Exception as agent_error:
+            logger.error(f"Agent execution error: {str(agent_error)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Agent execution error: {str(agent_error)}")
+        
+        # Return response
+        response_data = {
+            "thread_id": thread_id,
+            "graph_output": graph_output,
+            "status": "success"
+        }
+        
+        logger.info(f"Returning successful response for slug agent thread {thread_id}")
+        return JSONResponse(content=response_data, status_code=200)
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    
+    except Exception as e:
+        # Log the full error
+        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        error_response = {
+            "thread_id": request.thread_id if hasattr(request, 'thread_id') and request.thread_id else "unknown",
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }
+        
+        return JSONResponse(content=error_response, status_code=500)
+        
 @app.post("/api/v2/invoke")
 async def chat_endpoint(request: ChatRequestDict):
     """
