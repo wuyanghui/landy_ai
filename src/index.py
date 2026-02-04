@@ -12,6 +12,10 @@ from typing import Optional, List, Dict, Any, TypedDict
 import json
 import logging
 import traceback
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -29,7 +33,7 @@ app = FastAPI(
     openapi_url="/api/openapi.json"
     )
 
-DB_URI = 'postgresql://neondb_owner:npg_0tVuL1ygDCPa@ep-old-dust-a1ymzy94-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require'
+DB_URI = os.environ.get("DB_URI")
 
 @app.get("/health")
 def health():
@@ -105,7 +109,8 @@ async def chat_endpoint(request: ChatSlugRequestDict):
     Args:
         message: User's search query
         thread_id: Optional thread ID for conversation continuity
-    
+        slug: slug of the property
+
     Returns:
         JSON string with thread_id, AI response, preferences, and listings
     """
@@ -121,10 +126,13 @@ async def chat_endpoint(request: ChatSlugRequestDict):
         thread_id = request.thread_id or str(uuid.uuid4())
         logger.info(f"Processing message for thread_id: {thread_id}")
         
+        slug = request.slug
+        if not slug:
+            logger.error("Empty slug received")
+            raise HTTPException(status_code=400, detail="Slug is required")
+        
         # Initialize variables
         graph_output = ""
-        preferences = None
-        recommended_listings = None
         
         # STEP 1: Test database connection first
         logger.info("Testing database connection...")
