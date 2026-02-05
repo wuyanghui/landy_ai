@@ -295,7 +295,7 @@ async def chat_endpoint(request: ChatRequestDict):
                 tools = [search_listing_property_from_database]
                 agent = create_agent(
                     system_prompt=prompt,
-                    model=load_llm(model='gpt-5-mini').bind_tools(tools),
+                    model=load_llm(model='gpt-4.1-mini').bind_tools(tools),
                     tools=tools,
                     checkpointer=checkpointer,
                 )
