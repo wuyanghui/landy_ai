@@ -86,11 +86,18 @@ dependencies = [
     "uvicorn==0.38.0",
     "wcwidth==0.2.14",
     "xxhash==3.6.0",
-    "zstandard==0.25.0",
+"zstandard==0.25.0",
 ]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
 
 [project.scripts]
 app = "src.index:app"
 
 [tool.vercel.scripts]
 build = "python build.py"
+
+[tool.uv.extra-build-dependencies]
+flatdict = ["pkg_resources"]
