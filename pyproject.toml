@@ -24,7 +24,6 @@ dependencies = [
     "distro==1.9.0",
     "dnspython==1.16.0",
     "executing==2.2.1",
-    "flatdict==4.0.1",
     "h11==0.16.0",
     "httpcore==1.0.9",
     "httpx==0.28.1",
@@ -100,4 +99,3 @@ app = "src.index:app"
 build = "python build.py"
 
 [tool.uv.extra-build-dependencies]
-flatdict = ["pkg_resources"]
