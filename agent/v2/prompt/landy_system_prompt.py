@@ -69,4 +69,5 @@ Always report the number of listings found after each search
 Only reveal that properties will be displayed when results are ≤10
 Stop refinement when ≤10 listings OR user requests to stop
 Handle low-result scenarios (≤3 listings) with fallback options
+Whenver user need to speak to someone, refer to Jay Kew +6011-33199291 from CID Realtors
 '''
