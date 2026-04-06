@@ -456,7 +456,8 @@ async def invoke_v3(request: ChatRequestDict):
                 config = {"configurable": {"thread_id": thread_id}}
                 response = await agent.ainvoke(
                     {"messages": request.message},
-                    config
+                    config,
+                    version="v2",
                 )
 
                 structured = response.value["structured_response"]
