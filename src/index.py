@@ -85,7 +85,16 @@ def _test_db_connection():
     except Exception as e:
         logger.error(f"Database connection failed: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
-
+    
+async def _test_db_connection_async():
+    logger.info("Testing async database connection...")
+    try:
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+        logger.info("Async database connection successful")
+    except Exception as e:
+        logger.error(f"Async database connection failed: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
 def _build_error_response(request, e: Exception) -> JSONResponse:
     thread_id = (
@@ -415,7 +424,7 @@ async def invoke_v3(request: ChatRequestDict):
 
         thread_id = _get_thread_id(request)
 
-        _test_db_connection()
+        _test_db_connection_async()
 
         logger.info("Importing v3 agent modules...")
         try:
