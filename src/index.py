@@ -67,39 +67,41 @@ class ChatSlugRequestDict(BaseModel):
     slug: str
     thread_id: Optional[str] = None
 
-class FilterPreferencesDict(TypedDict, total=False):
-    location: Optional[str]
-    price_min: Optional[float]
-    price_max: Optional[float]
-    bedrooms: Optional[int]
-    property_type: Optional[str]
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-class PropertyListingDict(TypedDict, total=False):
-    property_id: str
-    title: Optional[str]
-    price: Optional[float]
-    bedrooms: Optional[int]
-    bathrooms: Optional[int]
-    location: Optional[str]
-    description: Optional[str]
-    url: Optional[str]
+def _get_thread_id(request) -> str:
+    return request.thread_id or str(uuid.uuid4())
 
-class ChatResponseDict(TypedDict):
-    thread_id: str
-    graph_output: str
-    preferences: Optional[Dict[str, Any]]
-    recommended_listings: Optional[List[Dict[str, Any]]]
-    status: str
 
-class ThreadInfoDict(TypedDict):
-    thread_id: str
-    status: str
-    message: Optional[str]
+def _test_db_connection():
+    logger.info("Testing database connection...")
+    try:
+        with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            checkpointer.setup()
+        logger.info("Database connection successful")
+    except Exception as e:
+        logger.error(f"Database connection failed: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
-class ErrorResponseDict(TypedDict):
-    thread_id: str
-    status: str
-    error: str
+
+def _build_error_response(request, e: Exception) -> JSONResponse:
+    thread_id = (
+        request.thread_id
+        if hasattr(request, "thread_id") and request.thread_id
+        else "unknown"
+    )
+    return JSONResponse(
+        content={
+            "thread_id": thread_id,
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc(),
+        },
+        status_code=500,
+    )
 
 @app.post("/api/v2/invoke/slug")
 async def chat_endpoint(request: ChatSlugRequestDict):
@@ -276,9 +278,9 @@ async def chat_endpoint(request: ChatRequestDict):
         try:
             from langchain.agents import create_agent
             from agent.v2.tools.search_listing_database import search_listing_property_from_database
-            from agent.v2.utility import _serialize_public_listing
             from agent.v2.prompt.landy_system_prompt import prompt
             from utility.property_listing_init import get_property_listing_collections
+            from agent.v2.utility import _serialize_public_listing
             from utility.llm_init import load_llm
             logger.info("All imports successful")
         except ImportError as import_error:
@@ -391,3 +393,101 @@ async def chat_endpoint(request: ChatRequestDict):
         
         return JSONResponse(content=error_response, status_code=500)
     
+@app.post("/api/v3/invoke")
+async def invoke_v3(request: ChatRequestDict):
+    """
+    Chat endpoint for property search agent v3.
+
+    Args:
+        message:   User's search query
+        thread_id: Optional conversation thread ID
+
+    Returns:
+        JSON with thread_id, graph_output, agent_referral_shown,
+        follow_up_suggestions, recommended_listings, and status
+    """
+    logger.info(f"Received v3 request: {request}")
+
+    try:
+        if not request.message:
+            raise HTTPException(status_code=400, detail="Message is required")
+
+        thread_id = _get_thread_id(request)
+
+        _test_db_connection()
+
+        logger.info("Importing v3 agent modules...")
+        try:
+            from agent.v3.prompt.agent_prompt import AGENT_PROMPT
+            from agent.v3.tools.search_property import asearch_properties
+            from deepagents import create_deep_agent
+            from agent.v3.orchestration import OverallState, adynamic_model_selection, router_model
+            from langchain.agents.structured_output import ProviderStrategy
+            from utility.property_listing_init import get_property_listing_collections
+            from agent.v2.utility import _serialize_public_listing
+        except ImportError as e:
+            logger.error(f"Import failed: {str(e)}\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Import error: {str(e)}")
+
+        logger.info("Setting up v3 agent...")
+        try:
+            with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                checkpointer.setup()
+
+                agent = create_deep_agent(
+                    model=router_model,
+                    tools=[asearch_properties],
+                    middleware=[adynamic_model_selection],
+                    system_prompt=AGENT_PROMPT,
+                    response_format=ProviderStrategy(OverallState),
+                    checkpointer=checkpointer,
+                )
+
+                # Load existing conversation history for this thread
+                config = {"configurable": {"thread_id": thread_id}}
+                existing_state = checkpointer.get(config)
+                history = existing_state["channel_values"].get("messages", []) if existing_state else []
+                logger.info(f"Loaded {len(history)} messages from history for thread {thread_id}")
+
+                # Append the new user message to history
+                messages = [*history, {"role": "user", "content": request.message}]
+
+                response = await agent.ainvoke(
+                    {"messages": messages},
+                    config,
+                    version="v2",
+                )
+
+                structured = response.value["structured_response"]
+
+                documents = list(
+                    get_property_listing_collections().find(
+                        {"property_id": {"$in": structured.recommended_property_ids}}
+                    )
+                )
+                recommended_listings = [_serialize_public_listing(doc) for doc in documents]
+
+                logger.info("V3 agent completed")
+
+        except Exception as e:
+            logger.error(f"V3 agent execution error: {str(e)}\n{traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"Agent execution error: {str(e)}")
+
+        logger.info(f"Returning v3 response for thread {thread_id}")
+        return JSONResponse(
+            content={
+                "thread_id": thread_id,
+                "graph_output": structured.final_output,
+                "agent_referral_shown": structured.agent_referral_shown,
+                "follow_up_suggestions": structured.follow_up_suggestions,
+                "recommended_listings": recommended_listings,
+                "status": "success",
+            },
+            status_code=200,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
+        return _build_error_response(request, e)

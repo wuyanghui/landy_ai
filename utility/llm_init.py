@@ -9,6 +9,15 @@ openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
 def load_llm(model = "openai/gpt-5.4-mini"):
     llm = ChatOpenAI(
+        model = model,
+        api_key=os.getenv("AI_GATEWAY_API_KEY"),
+        base_url="https://ai-gateway.vercel.sh/v1"
+    )
+    return llm
+
+async def aload_llm(model = "openai/gpt-5.4-mini"):
+    llm = ChatOpenAI(
+        model = model,
         api_key=os.getenv("AI_GATEWAY_API_KEY"),
         base_url="https://ai-gateway.vercel.sh/v1"
     )
