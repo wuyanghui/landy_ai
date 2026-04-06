@@ -36,117 +36,87 @@ class OverallState(BaseModel):
 # --- Models (role-based, not size-based) ---
 router_model    = load_llm("openai/gpt-5.4-nano")
 search_model    = load_llm("openai/gpt-5.4-mini")
-response_model  = load_llm("openai/gpt-5.4")
+premium_model  = load_llm("anthropic/claude-haiku-4.5")
 
-
-# --- Dynamic Model Selection ---
-@wrap_model_call
-def dynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
-    """
-    Production-ready selector:
-    1. Task-driven (primary)
-    2. Lightweight complexity (search only)
-    """
-
-    state = request.state or {}
-    task = state.get("task", "default")
-    messages = state.get("messages") or getattr(request, "messages", [])
-
-    # --- Extract last user message ---
-    last_user_msg = ""
-    if messages:
-        last_user_msg = getattr(messages[-1], "content", "").lower()
-
-    word_count = len(last_user_msg.split())
-
-    # --- Lightweight complexity signals ---
-    is_long_query = word_count > 25
-
-    has_compare_intent = any(k in last_user_msg for k in [
-        "compare", "best", "which", "difference", "pros", "cons"
-    ])
-
-    has_multi_constraints = sum([
-        "near" in last_user_msg,
-        any(k in last_user_msg for k in ["rm", "budget", "price"]),
-        any(k in last_user_msg for k in ["sqft", "size", "built-up", "land"])
-    ]) >= 2
-
-    # --- Model Selection (Task-first) ---
-    if task == "routing":
-        model = router_model
-
-    elif task == "search":
-        if has_compare_intent or has_multi_constraints or is_long_query:
-            model = search_model
-        else:
-            model = router_model  # cheap shortcut
-
-    elif task == "response":
-        model = response_model
-
-    else:
-        # safe fallback
-        model = router_model
-
-    return handler(request.override(model=model))
-
-# --- Dynamic Model Selection ---
 @wrap_model_call
 async def adynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
-    """
-    Async Production-ready selector:
-    1. Task-driven (primary)
-    2. Lightweight complexity (search only)
-    """
 
-    state = request.state or {}
-    task = state.get("task", "default")
-    messages = state.get("messages") or getattr(request, "messages", [])
-
-    # --- Extract last user message ---
+    # --- Safely extract last human message from whatever structure arrives ---
     last_user_msg = ""
-    if messages:
-        # Standardize content extraction for async context
-        msg_obj = messages[-1]
-        last_user_msg = getattr(msg_obj, "content", "")
-        if not isinstance(last_user_msg, str):
-            last_user_msg = str(last_user_msg)
-        last_user_msg = last_user_msg.lower()
+
+    # Try all known locations the message might live in
+    candidates = []
+
+    # Path 1: request.messages list (most common in deepagents middleware)
+    raw_messages = getattr(request, "messages", None) or []
+    candidates.extend(raw_messages)
+
+    # Path 2: request.state["messages"] (LangGraph state dict)
+    state = getattr(request, "state", None) or {}
+    if isinstance(state, dict):
+        candidates.extend(state.get("messages", []))
+
+    # Walk backwards — find the last human turn
+    for msg in reversed(candidates):
+        # Handle both LangChain message objects and raw dicts
+        if isinstance(msg, dict):
+            role    = msg.get("role", "")
+            content = msg.get("content", "")
+        else:
+            role    = getattr(msg, "type", "") or getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+
+        if role in ("human", "user") and content:
+            last_user_msg = content.lower() if isinstance(content, str) else str(content).lower()
+            break
 
     word_count = len(last_user_msg.split())
 
-    # --- Lightweight complexity signals ---
-    is_long_query = word_count > 25
+    print(f"[model_selector] extracted msg ({word_count}w): {last_user_msg[:80]!r}")
+
+    # --- Signals ---
+    has_multi_intent = sum([
+        any(k in last_user_msg for k in ["compare", "vs", "rank"]),
+        any(k in last_user_msg for k in ["summarise", "summarize", "recap", "overview"]),
+        any(k in last_user_msg for k in ["report", "shortlist", "share", "forward"]),
+        any(k in last_user_msg for k in ["and then", "after that", "also show", "as well as"]),
+    ]) >= 2
+
+    has_analysis_intent = any(k in last_user_msg for k in [
+        "analyse", "analyze", "explain why", "which is better",
+        "recommend", "advise", "should i", "what would you suggest",
+    ])
+
+    has_report_intent = any(k in last_user_msg for k in [
+        "report", "summary i can share", "format for sharing",
+        "send to my", "export", "shortlist all",
+    ])
 
     has_compare_intent = any(k in last_user_msg for k in [
-        "compare", "best", "which", "difference", "pros", "cons"
+        "compare", "best", "which", "difference", "pros", "cons",
     ])
 
     has_multi_constraints = sum([
-        "near" in last_user_msg,
+        "near"  in last_user_msg,
         any(k in last_user_msg for k in ["rm", "budget", "price"]),
-        any(k in last_user_msg for k in ["sqft", "size", "built-up", "land"])
+        any(k in last_user_msg for k in ["sqft", "size", "built-up", "land"]),
     ]) >= 2
 
-    # --- Model Selection (Task-first) ---
-    if task == "routing":
-        selected_model = router_model
+    is_long_query      = word_count > 25
+    is_very_long_query = word_count > 50
 
-    elif task == "search":
-        if has_compare_intent or has_multi_constraints or is_long_query:
-            selected_model = search_model
-        else:
-            selected_model = router_model  # cheap shortcut
-
-    elif task == "response":
-        selected_model = response_model
-
+    # --- Select raw model (no .with_structured_output — create_deep_agent owns that) ---
+    if has_multi_intent or has_analysis_intent or has_report_intent or is_very_long_query:
+        selected_model = premium_model
+        tier = "premium"
+    elif has_compare_intent or has_multi_constraints or is_long_query:
+        selected_model = search_model
+        tier = "search"
     else:
-        # safe fallback
         selected_model = router_model
+        tier = "router"
 
-    # --- CRITICAL: Await the handler call ---
-    # We await here so the event loop can handle other users while 
-    # the LLM is generating a response.
+    print(f"[model_selector] tier={tier} | multi_intent={has_multi_intent} | "
+          f"analysis={has_analysis_intent} | report={has_report_intent}")
+
     return await handler(request.override(model=selected_model))

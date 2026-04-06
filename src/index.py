@@ -428,7 +428,7 @@ async def invoke_v3(request: ChatRequestDict):
 
         logger.info("Importing v3 agent modules...")
         try:
-            from agent.v3.prompt.agent_prompt import AGENT_PROMPT
+            from agent.v3.prompt.agent_prompt_v2 import AGENT_PROMPT
             from agent.v3.tools.search_property import asearch_properties
             from deepagents import create_deep_agent
             from agent.v3.orchestration import OverallState, adynamic_model_selection, router_model
