@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from agent.v1.orchestrator import graph
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Optional, List, Dict, Any, TypedDict
@@ -431,8 +432,8 @@ async def invoke_v3(request: ChatRequestDict):
 
         logger.info("Setting up v3 agent...")
         try:
-            with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
-                checkpointer.setup()
+            async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                await checkpointer.setup()
 
                 agent = create_deep_agent(
                     model=router_model,
@@ -445,7 +446,7 @@ async def invoke_v3(request: ChatRequestDict):
 
                 # Load existing conversation history for this thread
                 config = {"configurable": {"thread_id": thread_id}}
-                existing_state = checkpointer.get(config)
+                existing_state = await checkpointer.get(config)
                 history = existing_state["channel_values"].get("messages", []) if existing_state else []
                 logger.info(f"Loaded {len(history)} messages from history for thread {thread_id}")
 
