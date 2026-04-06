@@ -460,7 +460,7 @@ async def invoke_v3(request: ChatRequestDict):
                     version="v2",
                 )
 
-                structured = response.value["structured_response"]
+                structured = response["structured_response"]
 
                 documents = list(
                     get_property_listing_collections().find(
