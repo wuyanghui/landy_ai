@@ -453,17 +453,9 @@ async def invoke_v3(request: ChatRequestDict):
                     checkpointer=checkpointer,
                 )
 
-                # Load existing conversation history for this thread
                 config = {"configurable": {"thread_id": thread_id}}
-                existing_state = await checkpointer.get(config)
-                history = existing_state["channel_values"].get("messages", []) if existing_state else []
-                logger.info(f"Loaded {len(history)} messages from history for thread {thread_id}")
-
-                # Append the new user message to history
-                messages = [*history, {"role": "user", "content": request.message}]
-
                 response = await agent.ainvoke(
-                    {"messages": messages},
+                    {"messages": request.message},
                     config
                 )
 
