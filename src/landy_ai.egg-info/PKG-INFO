@@ -86,3 +86,4 @@ Requires-Dist: wcwidth==0.2.14
 Requires-Dist: xxhash==3.6.0
 Requires-Dist: zstandard==0.25.0
 Requires-Dist: upstash-vector==0.8.0
+Requires-Dist: deepagents>=0.3.1

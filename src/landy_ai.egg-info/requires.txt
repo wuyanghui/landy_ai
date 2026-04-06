@@ -83,3 +83,4 @@ wcwidth==0.2.14
 xxhash==3.6.0
 zstandard==0.25.0
 upstash-vector==0.8.0
+deepagents>=0.3.1
