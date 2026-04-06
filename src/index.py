@@ -424,7 +424,7 @@ async def invoke_v3(request: ChatRequestDict):
 
         thread_id = _get_thread_id(request)
 
-        _test_db_connection_async()
+        await _test_db_connection_async()
 
         logger.info("Importing v3 agent modules...")
         try:
