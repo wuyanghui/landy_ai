@@ -1,6 +1,20 @@
 from typing import Dict, Any
+from datetime import datetime, date
+
+def _serialize_value(value):
+    """Recursively serialize any value, converting datetime objects to ISO strings."""
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    elif isinstance(value, dict):
+        return {k: _serialize_value(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    return value
 
 def _serialize_public_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
+    # Serialize the entire doc recursively to catch any datetime objects
+    doc = _serialize_value(doc)
+    
     offer = doc.get("offer") or {}
     location = doc.get("location") or {}
     address = location.get("address") or {}
@@ -43,6 +57,9 @@ def _serialize_public_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _serialize_listing_detail(doc: Dict[str, Any]) -> Dict[str, Any]:
+    # Serialize the entire doc recursively to catch any datetime objects
+    doc = _serialize_value(doc)
+    
     offer = doc.get("offer") or {}
     location = doc.get("location") or {}
     address = location.get("address") or {}
