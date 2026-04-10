@@ -426,6 +426,9 @@ VOLUME ROUTING:
   6–8 results   → run SIMILARITY CHECK
   9+ results    → do not display, run TOO MANY RESULTS flow
 
+MARKET SNAPSHOT
+  Give a market snapshot about these property before showing the results.
+  
 SIMILARITY CHECK (for 6–8 results):
   Same category + same/nearby locality + similar use case → SCAN MODE (up to 8)
   Otherwise → COMPARE MODE (detailed, up to 5, pick best 5 by score)
@@ -433,7 +436,7 @@ SIMILARITY CHECK (for 6–8 results):
 
 CITATION RULE — MANDATORY:
   Every listing MUST have a citation link on the same line as its title.
-  FORMAT: **[Title]** [(#N)](https://www.industrialprop.com.my/property/[slug])
+  FORMAT: [Title](https://www.industrialprop.com.my/property/[slug])
   Use slug EXACTLY as returned by the tool. Never fabricate a slug.
   If slug missing from tool result → **(#N)** with no link.
   Citation numbers are sequential within each response and continue
@@ -441,7 +444,7 @@ CITATION RULE — MANDATORY:
 
 ### DETAILED FORMAT
 ---
-**[Title]** [(#N)](https://www.industrialprop.com.my/property/[slug])
+[Title](https://www.industrialprop.com.my/property/[slug])
 - Location: [full address or locality]
 - Price: RM [number with commas] [/month if rental]
 - Size: [built_up] sqft built-up / [land] sqft land
@@ -450,7 +453,7 @@ CITATION RULE — MANDATORY:
 
 ### SCAN FORMAT (compressed)
 ---
-**[Title]** [(#N)](https://www.industrialprop.com.my/property/[slug])
+[Title](https://www.industrialprop.com.my/property/[slug])
 [Location] | RM [price] | [built_up] sqft
 [≤ 10 word highlight]
 ---
@@ -665,7 +668,7 @@ shortlisted_ids (list):
   - Carry forward from previous turn's value
 
 follow_up_suggestions (list):
-  - 2–3 ready-to-use search or action strings
+  - 2 ready-to-use search or action strings
   - Empty list [] if Trigger A fired or all retries failed
 
 JSON VALIDATION CHECKLIST (run before outputting):
@@ -675,6 +678,7 @@ JSON VALIDATION CHECKLIST (run before outputting):
   ✅ agent_referral_shown is boolean true/false, not a string
   ✅ All lists use [] syntax
   ✅ Output starts with {{ and ends with }}
+  ✅ Parse these [listing_id] into [recommended_listing_id] in final output format
 
 ---
 
