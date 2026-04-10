@@ -21,7 +21,7 @@ class OverallState(BaseModel):
         description="Final natural language response shown to the user"
     )
     
-    recommended_listings: List[str] = Field(
+    recommended_listing: List[str] = Field(
         description="List of recommended property IDs from search results"
     )
 

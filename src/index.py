@@ -464,7 +464,7 @@ async def invoke_v3(request: ChatRequestDict):
 
                 documents = list(
                     get_property_listing_collections().find(
-                        {"property_id": {"$in": structured.recommended_property_ids}}
+                        {"property_id": {"$in": structured.recommended_listings}}
                     )
                 )
                 recommended_listings = [_serialize_public_listing(doc) for doc in documents]
