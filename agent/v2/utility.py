@@ -30,7 +30,7 @@ def _serialize_public_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
 
         "category_type": (
             [doc["main_category"]] if doc.get("main_category") else []
-        ) + doc.get("sub_categories", []),
+        ) + (doc.get("sub_categories") or []),
 
         "location": {
             "address":  address.get("street_address", ""),
@@ -78,7 +78,7 @@ def _serialize_listing_detail(doc: Dict[str, Any]) -> Dict[str, Any]:
 
         "category_type": (
             [doc["main_category"]] if doc.get("main_category") else []
-        ) + doc.get("sub_categories", []),
+        ) + (doc.get("sub_categories") or []),
 
         "status": doc.get("market_status", ""),
 
