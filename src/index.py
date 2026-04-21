@@ -430,6 +430,7 @@ async def invoke_v3(request: ChatRequestDict):
         try:
             from agent.v3.prompt.agent_prompt_v2 import AGENT_PROMPT
             from agent.v3.tools.search_property import asearch_properties
+            from agent.v3.tools.newest_listings import aget_newest_listings
             from deepagents import create_deep_agent
             from agent.v3.orchestration import OverallState, adynamic_model_selection, router_model
             from langchain.agents.structured_output import ProviderStrategy
@@ -446,7 +447,7 @@ async def invoke_v3(request: ChatRequestDict):
 
                 agent = create_deep_agent(
                     model=router_model,
-                    tools=[asearch_properties],
+                    tools=[asearch_properties, aget_newest_listings],
                     middleware=[adynamic_model_selection],
                     system_prompt=AGENT_PROMPT,
                     response_format=ProviderStrategy(OverallState),
