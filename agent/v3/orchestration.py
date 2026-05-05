@@ -34,9 +34,9 @@ class OverallState(BaseModel):
     )
 
 # --- Models (role-based, not size-based) ---
-router_model    = load_llm("openai/gpt-5.4-nano")
-search_model    = load_llm("openai/gpt-5.4-mini")
-premium_model  = load_llm("anthropic/claude-haiku-4.5")
+router_model    = load_llm("deepseek/deepseek-v4-pro")
+search_model    = load_llm("deepseek/deepseek-v4-pro")
+premium_model  = load_llm("deepseek/deepseek-v4-pro")
 
 @wrap_model_call
 async def adynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
