@@ -34,9 +34,9 @@ class OverallState(BaseModel):
     )
 
 # --- Models (role-based, not size-based) ---
-router_model    = load_llm("deepseek/deepseek-v4-pro")
-search_model    = load_llm("deepseek/deepseek-v4-pro")
-premium_model  = load_llm("deepseek/deepseek-v4-pro")
+router_model    = load_llm("inception/mercury-2")
+search_model    = load_llm("inception/mercury-2")
+premium_model  = load_llm("inception/mercury-2")
 
 @wrap_model_call
 async def adynamic_model_selection(request: ModelRequest, handler) -> ModelResponse:
