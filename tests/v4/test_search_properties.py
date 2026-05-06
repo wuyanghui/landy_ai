@@ -115,3 +115,41 @@ def test_search_tool_complete_includes_ids(monkeypatch):
 
     complete = next(e for e in events if e["event"] == "tool_complete")
     assert "PROP-AAA" in complete["ids"]
+
+
+def test_search_filter_always_includes_active_status(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "agent.v4.tools.search_properties.get_stream_writer",
+        lambda: lambda d: None,
+    )
+
+    async def fake_query(**kwargs):
+        captured["filter"] = kwargs.get("filter", "")
+        return []
+
+    monkeypatch.setattr(sp_mod.async_index, "query", fake_query)
+
+    # No filters passed — only listing_status should be present
+    asyncio.run(sp_mod.asearch_properties.ainvoke({"query": "warehouse"}))
+    assert 'listing_status = "active"' in captured["filter"]
+
+
+def test_search_property_category_uses_has_for_sub_categories(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "agent.v4.tools.search_properties.get_stream_writer",
+        lambda: lambda d: None,
+    )
+
+    async def fake_query(**kwargs):
+        captured["filter"] = kwargs.get("filter", "")
+        return []
+
+    monkeypatch.setattr(sp_mod.async_index, "query", fake_query)
+
+    asyncio.run(sp_mod.asearch_properties.ainvoke(
+        {"query": "warehouse", "property_category": ["warehouse"]}
+    ))
+    assert "HAS" in captured["filter"]
+    assert 'sub_categories HAS "warehouse"' in captured["filter"]
