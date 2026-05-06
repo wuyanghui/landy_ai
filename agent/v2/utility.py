@@ -11,6 +11,17 @@ def _serialize_value(value):
         return [_serialize_value(item) for item in value]
     return value
 
+
+def _extract_coordinates(geo: dict) -> dict:
+    if not isinstance(geo, dict):
+        return {"lat": None, "lng": None}
+    pt = geo.get("point")
+    if isinstance(pt, dict):
+        coords = pt.get("coordinates")
+        if isinstance(coords, list) and len(coords) == 2:
+            return {"lat": coords[1], "lng": coords[0]}
+    return {"lat": None, "lng": None}
+
 def _serialize_public_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
     # Serialize the entire doc recursively to catch any datetime objects
     doc = _serialize_value(doc)
@@ -33,14 +44,11 @@ def _serialize_public_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
         ) + (doc.get("sub_categories") or []),
 
         "location": {
-            "address":  address.get("street_address", ""),
-            "area":     location.get("industrial_park_name", ""),
-            "district": address.get("address_region", ""),
-            "state":    address.get("address_locality", ""),
-            "coordinates": {
-                "lat": geo.get("latitude", ""),
-                "lng": geo.get("longitude", ""),
-            },
+            "address":     address.get("street_address", ""),
+            "area":        location.get("industrial_park_name", ""),
+            "district":    address.get("address_region", ""),
+            "state":       address.get("address_locality", ""),
+            "coordinates": _extract_coordinates(geo),
         },
 
         "specifications": {
@@ -83,15 +91,12 @@ def _serialize_listing_detail(doc: Dict[str, Any]) -> Dict[str, Any]:
         "status": doc.get("market_status", ""),
 
         "location": {
-            "address":  address.get("street_address", ""),
-            "area":     location.get("industrial_park_name", ""),
-            "district": address.get("address_region", ""),
-            "state":    address.get("address_locality", ""),
-            "postcode": address.get("postal_code", ""),
-            "coordinates": {
-                "lat": geo.get("latitude", ""),
-                "lng": geo.get("longitude", ""),
-            },
+            "address":     address.get("street_address", ""),
+            "area":        location.get("industrial_park_name", ""),
+            "district":    address.get("address_region", ""),
+            "state":       address.get("address_locality", ""),
+            "postcode":    address.get("postal_code", ""),
+            "coordinates": _extract_coordinates(geo),
         },
 
         "specifications": {
