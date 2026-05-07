@@ -83,7 +83,7 @@ async def asearch_properties(
     if property_category:
         expanded = expand_property_category(property_category)
         clauses.append("(" + " OR ".join(
-            [f'main_category = "{v}" OR sub_categories HAS "{v}"' for v in expanded]
+            [f'main_category = "{v}" OR sub_categories CONTAINS "{v}"' for v in expanded]
         ) + ")")
     if locality:
         clauses.append("(" + " OR ".join(

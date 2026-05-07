@@ -135,7 +135,7 @@ def test_search_filter_always_includes_active_status(monkeypatch):
     assert 'listing_status = "active"' in captured["filter"]
 
 
-def test_search_property_category_uses_has_for_sub_categories(monkeypatch):
+def test_search_property_category_uses_contains_for_sub_categories(monkeypatch):
     captured = {}
     monkeypatch.setattr(
         "agent.v4.tools.search_properties.get_stream_writer",
@@ -151,5 +151,5 @@ def test_search_property_category_uses_has_for_sub_categories(monkeypatch):
     asyncio.run(sp_mod.asearch_properties.ainvoke(
         {"query": "warehouse", "property_category": ["warehouse"]}
     ))
-    assert "HAS" in captured["filter"]
-    assert 'sub_categories HAS "warehouse"' in captured["filter"]
+    assert "CONTAINS" in captured["filter"]
+    assert 'sub_categories CONTAINS "warehouse"' in captured["filter"]
