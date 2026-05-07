@@ -33,3 +33,7 @@ def test_prompt_uses_correct_state_field_name():
 def test_prompt_contains_referral_contact():
     assert "Jay Kew" in AGENT_PROMPT
     assert "+6011-33199291" in AGENT_PROMPT
+
+
+def test_prompt_contains_history_placeholder():
+    assert "{history}" in AGENT_PROMPT
