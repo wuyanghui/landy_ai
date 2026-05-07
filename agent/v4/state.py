@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List
 
 
@@ -15,3 +15,10 @@ class OverallState(BaseModel):
     follow_up_suggestions: List[str] = Field(
         description="2-3 ready-to-use search strings the user can click"
     )
+
+    @field_validator("recommended_property_ids", mode="before")
+    @classmethod
+    def coerce_ids_to_str(cls, v):
+        if isinstance(v, list):
+            return [str(item) for item in v]
+        return v

@@ -35,3 +35,15 @@ def test_recommended_property_ids_is_list_of_strings():
         follow_up_suggestions=[],
     )
     assert all(isinstance(pid, str) for pid in state.recommended_property_ids)
+
+
+def test_recommended_property_ids_coerces_ints_to_strings():
+    # LLM sometimes returns integer IDs — validator must coerce them
+    state = OverallState(
+        agent_referral_shown=False,
+        final_output="done",
+        recommended_property_ids=[22, 110, 56],
+        follow_up_suggestions=[],
+    )
+    assert state.recommended_property_ids == ["22", "110", "56"]
+    assert all(isinstance(pid, str) for pid in state.recommended_property_ids)

@@ -162,6 +162,7 @@ Return ONLY a valid JSON object. No markdown fences. No text before or after.
 
 recommended_property_ids:
 - Ordered list of property_id values for all listings shown in this response.
+- Always strings — wrap in quotes: ["22", "56"] not [22, 56].
 - Use only property_ids from tool output — never invent.
 - Must not be empty when listings are shown.
 
