@@ -494,3 +494,158 @@ async def invoke_v3(request: ChatRequestDict):
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
         return _build_error_response(request, e)
+
+
+# ─────────────────────────────────────────
+# V4 — shared request model
+# ─────────────────────────────────────────
+class V4ChatRequest(BaseModel):
+    message: str
+    thread_id: Optional[str] = None
+
+
+# ─────────────────────────────────────────
+# POST /api/v4/invoke
+# ─────────────────────────────────────────
+@app.post("/api/v4/invoke")
+async def invoke_v4(request: V4ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+
+    logger.info(f"[v4/invoke] thread={thread_id}")
+
+    try:
+        from agent.v4.orchestration import create_agent as create_v4_agent
+        from agent.v2.utility import _serialize_public_listing
+
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+            agent = create_v4_agent(checkpointer)
+
+            response = await agent.ainvoke(
+                {"messages": request.message},
+                {"configurable": {"thread_id": thread_id}},
+                version="v2",
+            )
+
+        structured = response["structured_response"]
+
+        import asyncio as _asyncio
+        from utility.property_listing_init import get_property_listing_collections as _get_col
+
+        docs = await _asyncio.to_thread(
+            lambda: list(
+                _get_col().find({"property_id": {"$in": structured.recommended_property_ids}})
+            )
+        )
+        recommended_listings = [_serialize_public_listing(doc) for doc in docs]
+
+        return JSONResponse(
+            content={
+                "thread_id": thread_id,
+                "graph_output": structured.final_output,
+                "agent_referral_shown": structured.agent_referral_shown,
+                "follow_up_suggestions": structured.follow_up_suggestions,
+                "recommended_listings": recommended_listings,
+                "status": "success",
+            },
+            status_code=200,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v4/invoke] error: {e}\n{traceback.format_exc()}")
+        return _build_error_response(request, e)
+
+
+# ─────────────────────────────────────────
+# V4 SSE helpers
+# ─────────────────────────────────────────
+def _build_sse_line(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def _extract_property_ids(event: dict) -> list:
+    data = event.get("data") or {}
+    if not isinstance(data, dict):
+        return []
+    if data.get("event") != "tool_complete":
+        return []
+    ids = data.get("ids") or []
+    return ids if isinstance(ids, list) else []
+
+
+# ─────────────────────────────────────────
+# POST /api/v4/stream
+# ─────────────────────────────────────────
+from fastapi.responses import StreamingResponse as _StreamingResponse
+
+
+@app.post("/api/v4/stream")
+async def stream_v4(request: V4ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v4/stream] thread={thread_id}")
+
+    import asyncio as _asyncio
+    from agent.v4.orchestration import create_agent as _create_v4_agent
+    from agent.v2.utility import _serialize_public_listing
+    from utility.property_listing_init import get_property_listing_collections as _get_col
+
+    async def _event_generator():
+        try:
+            async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                await checkpointer.setup()
+                agent = _create_v4_agent(checkpointer)
+
+                async for raw_event in agent.astream(
+                    {"messages": request.message},
+                    {"configurable": {"thread_id": thread_id}},
+                    stream_mode=["updates", "messages", "custom"],
+                    subgraphs=True,
+                    version="v2",
+                ):
+                    # v2 format: (type, ns, data)
+                    if not (isinstance(raw_event, tuple) and len(raw_event) == 3):
+                        continue
+                    type_, ns, data = raw_event
+                    event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
+
+                    yield _build_sse_line(event)
+
+                    # Intercept tool_complete to emit property_cards immediately
+                    ids = _extract_property_ids(event)
+                    if ids:
+                        docs = await _asyncio.to_thread(
+                            lambda: list(_get_col().find({"property_id": {"$in": ids}}))
+                        )
+                        listings = [_serialize_public_listing(doc) for doc in docs]
+                        cards_event = {
+                            "type": "custom",
+                            "ns": [],
+                            "data": {"event": "property_cards", "listings": listings},
+                        }
+                        yield _build_sse_line(cards_event)
+
+        except Exception as e:
+            logger.error(f"[v4/stream] error: {e}\n{traceback.format_exc()}")
+            error_event = {
+                "type": "custom",
+                "ns": [],
+                "data": {"event": "stream_error", "error": str(e)},
+            }
+            yield _build_sse_line(error_event)
+
+    return _StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
