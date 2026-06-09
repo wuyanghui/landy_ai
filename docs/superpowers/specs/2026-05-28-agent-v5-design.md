@@ -1,49 +1,67 @@
 # Agent V5 Design Spec
 **Date:** 2026-05-28 (updated 2026-06-09)
 **Project:** Landy.ai — Malaysia Industrial Property AI
-**Scope:** Clean-slate rebuild of agent tools and retrieval strategy
+**Scope:** Clean-slate rebuild of agent tools, orchestration, and retrieval strategy
 
 ---
 
 ## Why V5
 
-V4's retrieval has a structural failure: when MongoDB Stage 1 returns 0 candidates, Upstash is never called and the agent silently tells the user nothing exists. Location was used as a hard filter instead of a scoped preference, which means a wrong locality match kills the entire search. The tools also carry dead weight (radius search, newest listings as a separate tool) and import from v2 utilities.
+V4's retrieval has a structural failure: when MongoDB Stage 1 returns 0 candidates, Upstash is never called and the agent silently tells the user nothing exists. Location was used as a hard filter instead of a scoped preference. The agent tracked state as a mental JSON block inside the prompt — fragile over long conversations. Tools carried dead weight and imported from v2 utilities.
 
-V5 drops all of that and starts clean. It also targets the new DB schema (schema_version: 1) introduced in the June 2026 migration.
+V5 is a full clean-slate rebuild targeting the new DB schema (schema_version: 1).
 
 ---
 
 ## Core Design Decisions
 
+### Show first, guide after
+The agent always searches and shows results immediately — even on vague first messages. It asks one open guiding question alongside the results. Users who don't know how to interact with AI learn from reacting to results, not from answering structured questions upfront.
+
+### Top 5 with "why" comments
+The agent surfaces the 5 best-matched listings with a short comment per listing explaining why it was recommended, anchored to real listing data and the user's stated needs. Calls `get_listing_detail` for all 5 in parallel to get rich data for the comments.
+
+### Listing page URL for overflow
+When results exceed 5, the agent drops a URL to the listing page with query parameters encoding the active filters. Users explore the full result set on the website. The agent handles discovery; the website handles browsing.
+
+### Reject and refine
+When the user rejects the top 5 — ask why (extract new filter signal) and show the next 5 simultaneously. When all results are exhausted, broaden: drop location first, then price range, then category.
+
 ### Location is not a hard gate
-Location narrows the candidate pool but does not veto the search. If it returns 0 results, the tool reports that honestly — the **agent** asks the user whether to broaden, not the tool. Human-in-the-loop handles fallback.
+Location narrows the candidate pool but does not veto the search. If it returns 0 results, the tool reports honestly — the agent broadens rather than failing silently.
 
 ### Location matching is alias-based, not regex
-The new schema embeds an `aliases` array at every hierarchy level inside each listing document. Matching uses `$in` against `aliases` — far more reliable than free-text regex. "HICOM" → `$in ["hicom-glenmarie", "hicom industrial park", ...]`. The agent normalises abbreviations before calling the tool; the tool matches against structured aliases.
+The new schema embeds an `aliases` array at every hierarchy level. Matching uses `$in` against aliases — far more reliable than free-text regex. "HICOM" matches `["hicom-glenmarie", "hicom industrial park", ...]`.
 
 ### Proximity is a structured filter, not semantic
-`location.nearest.highway.distance_km`, `location.nearest.port.distance_km`, and `location.nearest.airport.distance_km` are indexed fields. "Near a highway", "close to Port Klang", "near airport" are MongoDB Stage 1 filters — they do not belong in the Upstash `query` string.
+`location.nearest.highway/port/airport.distance_km` are indexed fields. "Near a highway", "close to Port Klang" are MongoDB Stage 1 filters — not Upstash query strings.
 
-### Semantic search is for qualitative features
-Upstash surfaces description-level requirements that no structured field captures: "solar panel ready", "cold storage", "ramp access", "raised floor". If the user has no feature keywords, semantic stage is skipped entirely.
+### Semantic search is for qualitative features only
+Upstash surfaces description-level requirements no structured field captures: "solar panel ready", "cold storage", "ramp access", "raised floor". Never put location, distances, or numbers in the query string.
 
-### No internal fallback logic
-Tools return what they find and describe it. The agent reads the metadata and decides what to ask the user next. Tools do not auto-broaden, auto-retry, or guess intent.
+### Reason from data, hand off speculation
+Agent can reason about operational fit using real data: highway access, industrial zone maturity, proximity to port. When pushed into investment analysis ("what's the yield?", "will this appreciate?") — the agent doesn't have that data and surfaces the live agent instead of speculating.
 
-### SSE streaming for perceived performance
-MongoDB results (~100ms) stream immediately as `property_cards`. If semantic runs, re-ranked results stream as `property_cards_reranked`. The user sees listings appear fast; re-ordering happens silently.
+### Human-in-the-loop fallback
+Tools return what they find and describe it. The agent reads metadata and decides what to ask the user next. No auto-broadening inside tools.
 
-### Upstash handles embedding server-side
-`data=query` — no pre-embedding step, no OpenAI dependency. Cold starts handled separately via cron warmup job (free tier).
+### SSE everything
+No final JSON blob. Everything streams as typed events. Frontend renders incrementally.
+
+### Minimal state in LangGraph
+Only persist what conversation history genuinely cannot reconstruct. Filters live in history — the LLM reads them reliably. Only `shown_property_ids`, `live_agent_cta_shown`, and `active_filters` (compaction safety) go into LangGraph state.
+
+### Language matching
+Agent responds in the same language the user writes in — English, Malay, or mixed. Property names and spec units stay as-is.
 
 ### No imports from v2/v3/v4
-Every file in `agent/v5/` is self-contained. No shared utilities from prior versions.
+Every file in `agent/v5/` is self-contained.
 
 ---
 
 ## New DB Schema (schema_version: 1)
 
-Key field changes from old schema that v5 tools must use:
+Key field changes from old schema:
 
 | Field | Old path | New path |
 |---|---|---|
@@ -61,19 +79,12 @@ Key field changes from old schema that v5 tools must use:
 | Tenure | `tenure` (string) | `tenure.type` |
 | Currency | `offer.price_currency` | `offer.currency` |
 
-New structured proximity fields (no old equivalent):
-- `location.nearest.highway.slug / name / distance_km / drive_distance_km`
-- `location.nearest.port.slug / name / distance_km / drive_distance_km`
-- `location.nearest.airport.slug / name / distance_km / drive_distance_km`
-- `location.nearest.mrt_station.slug / name / distance_km`
-- `location.key_distances.klia.drive_distance_km`
-- `location.key_distances.port_klang.northport.drive_distance_km`
+New structured proximity fields:
+- `location.nearest.highway/port/airport/mrt_station` — slug, name, distance_km, drive_distance_km
+- `location.key_distances.klia`, `port_klang.northport`, `port_klang.westports`
 
 New industrial fields:
-- `traits.industrial.loading_bays`
-- `traits.industrial.overhead_crane`
-- `traits.industrial.office_area_sqft`
-- `traits.industrial.yard_area_sqft`
+- `traits.industrial.loading_bays`, `overhead_crane`, `office_area_sqft`, `yard_area_sqft`
 - `traits.building.completion_year`
 
 ---
@@ -88,57 +99,64 @@ agent/v5/
 ├── prompt/
 │   └── agent_prompt.py
 └── tools/
-    ├── _utils.py              # category expansion + shared property serializer
-    ├── search_properties.py   # two-stage hybrid: MongoDB filter + Upstash semantic
-    └── property_detail.py     # single property full detail fetch
+    ├── _utils.py              # category expansion + serializers
+    ├── find_listings.py       # two-stage hybrid: MongoDB filter + Upstash semantic
+    └── get_listing_detail.py  # single full document fetch, designed for parallel calls
+```
+
+---
+
+## LangGraph State
+
+```python
+class OverallState(TypedDict):
+    shown_property_ids: List[str]       # IDs already displayed — prevents re-showing
+    live_agent_cta_shown: bool          # CTA fires once per trigger
+    active_filters: Dict[str, Any]      # Persisted for context compaction safety
 ```
 
 ---
 
 ## Tools
 
-### `search_properties`
+### `find_listings`
 
-**Purpose:** Find active industrial properties matching structured filters and optional feature keywords.
+**Purpose:** Find active industrial property listings matching structured filters and optional feature keywords.
 
 **Parameters:**
 
 | Parameter | Type | Notes |
 |---|---|---|
-| `query` | `str` | Qualitative feature keywords only — things no structured field captures. E.g. "solar panel ready", "cold storage", "raised floor". Do NOT put location or proximity here. |
+| `query` | `str` | Qualitative feature keywords only. E.g. "solar panel ready", "cold storage". No location, no numbers. |
 | `offer_type` | `"sale" \| "rent" \| None` | Optional. Don't force if user hasn't specified. |
 | `property_category` | `List[str] \| None` | Expanded via category map in `_utils.py`. |
-| `locality` | `str \| None` | City/district name or alias slug. Matched against `location.hierarchy.city.aliases` and `location.hierarchy.industrial_park.aliases` using `$in`. |
-| `region` | `str \| None` | State name. Matched against `location.hierarchy.state.aliases` using `$in`. |
-| `price_min` | `float \| None` | `offer.price` lower bound. |
-| `price_max` | `float \| None` | `offer.price` upper bound. |
-| `built_up_sqft_min` | `float \| None` | `built_up_area_sqft` lower bound. |
-| `built_up_sqft_max` | `float \| None` | `built_up_area_sqft` upper bound. |
-| `land_sqft_min` | `float \| None` | `land_size_sqft` lower bound. |
-| `land_sqft_max` | `float \| None` | `land_size_sqft` upper bound. |
+| `locality` | `str \| None` | Matched against `location.hierarchy.city.aliases` and `location.hierarchy.industrial_park.aliases` using `$in`. |
+| `region` | `str \| None` | Matched against `location.hierarchy.state.aliases` using `$in`. |
+| `price_min` | `float \| None` | |
+| `price_max` | `float \| None` | |
+| `built_up_sqft_min` | `float \| None` | |
+| `built_up_sqft_max` | `float \| None` | |
+| `land_sqft_min` | `float \| None` | |
+| `land_sqft_max` | `float \| None` | |
 | `ceiling_height_min` | `float \| None` | `traits.building.ceiling_height_m` lower bound. |
 | `floor_loading_min` | `float \| None` | `traits.industrial.floor_loading_kn_m2` lower bound. |
-| `max_highway_km` | `float \| None` | `location.nearest.highway.distance_km` upper bound. Use when user says "near highway", "highway access", "near expressway". |
-| `max_port_km` | `float \| None` | `location.nearest.port.distance_km` upper bound. Use when user says "near port", "near Port Klang". |
-| `max_airport_km` | `float \| None` | `location.nearest.airport.distance_km` upper bound. Use when user says "near airport", "near KLIA", "near Subang airport". |
-| `sort_by` | `"newest" \| "price_asc" \| "price_desc" \| None` | Applied to Stage 1 results. Ignored if semantic stage runs — Upstash ranking takes precedence. |
+| `max_highway_km` | `float \| None` | Use for "near highway", "highway access". Default 5.0 when implied. |
+| `max_port_km` | `float \| None` | Use for "near port", "near Port Klang". Default 30.0 when implied. |
+| `max_airport_km` | `float \| None` | Use for "near airport", "near KLIA". Default 20.0 when implied. |
+| `sort_by` | `"newest" \| "price_asc" \| "price_desc" \| None` | Ignored if semantic stage runs. |
 
 **Stage 1 — MongoDB**
-- Hard filters: `listing_status = "active"`, category (expanded), price, built-up, land, ceiling height, floor loading, offer_type, proximity (highway/port/airport km)
-- Location matching:
-  - `locality` → `$or` across `location.hierarchy.city.aliases`, `location.hierarchy.industrial_park.aliases`, `location.hierarchy.suburb.aliases` using `$in` (normalised to lowercase)
-  - `region` → `location.hierarchy.state.aliases` using `$in`
-- Returns up to 100 candidate IDs
-- Streams `property_cards` event immediately with serialized listings
+- Hard filters: `listing_status = "active"`, category (expanded), price, sizes, ceiling height, floor loading, offer_type, proximity
+- Location: `locality` → `$in` on `city.aliases` + `industrial_park.aliases`; `region` → `$in` on `state.aliases`
+- No candidate cap — returns all matching documents
+- Streams `property_cards` immediately with serialized results
 
 **Stage 2 — Upstash**
-- Only runs when `query.strip()` is non-empty
-- Filters: `listing_status = "active" AND property_id IN (candidate_ids)`
-- `data=query` — Upstash handles embedding server-side
-- `top_k` based on candidate pool size (max 100)
-- Deduplicates by `property_id`
-- Streams `property_cards_reranked` event with re-ordered listings
-- On Upstash failure: silently keeps Stage 1 order, no error raised
+- Runs only when `query.strip()` is non-empty
+- `data=query`, Upstash handles embedding server-side (cron warmup handles cold starts)
+- No candidate cap passed to Upstash filter — all Stage 1 IDs included
+- Streams `property_cards_reranked` with updated order
+- On failure: silently keeps Stage 1 order
 
 **Return value:**
 ```json
@@ -162,9 +180,9 @@ search_complete         → { total_found: int, comment: str }
 
 ---
 
-### `property_detail`
+### `get_listing_detail`
 
-**Purpose:** Fetch full detail for a single property when the user asks about something not in search results — description, key features, loading bays, construction year, full specifications.
+**Purpose:** Fetch full document for a single property. Called in parallel for top 5 listings to provide rich data for "why recommended" comments and comparisons.
 
 **Parameters:**
 
@@ -172,19 +190,13 @@ search_complete         → { total_found: int, comment: str }
 |---|---|---|
 | `property_id` | `str` | From search results. |
 
-**Behaviour:**
-- Single MongoDB `find_one` by `property_id`
-- Returns full serialized document using v5's own serializer (no v2 imports)
-- Streams `property_detail_card` event
-
 **Do not call for:** price, size, location — already in search results.
 
-**Return value:** Full property dict, or `null` if not found.
+**Returns:** Full property dict or `null` if not found.
 
 **SSE events:**
 ```
-property_detail_start → { property_id: str }
-property_detail_card  → { listing: {...} }
+listing_detail_card → { listing: {...} }
 ```
 
 ---
@@ -192,16 +204,15 @@ property_detail_card  → { listing: {...} }
 ### `_utils.py`
 
 **`expand_property_category(categories)`**
-Maps user-facing category names to full variant sets:
 - `"factory"` → `["factory", "cluster-factory", "detached-factory", "semi-d-factory", "terrace-factory"]`
 - Other categories return themselves unchanged
 
-**`serialize_property(doc)`**
-Shared serializer for search results. New schema field paths:
-- `property_id`, `title`, `slug`
+**`serialize_listing(doc)`** — for `find_listings` results:
+- `property_id`, `title`, `slug`, `thumbnail`
 - `offer_type` ← `offer.offer_type`
 - `price` ← `offer.price`
 - `currency` ← `offer.currency`
+- `price_per_sqft` ← `price_per_sqft`
 - `city` ← `location.hierarchy.city.name`
 - `state` ← `location.hierarchy.state.name`
 - `industrial_park` ← `location.hierarchy.industrial_park.name`
@@ -215,27 +226,91 @@ Shared serializer for search results. New schema field paths:
 - `nearest_highway` ← `location.nearest.highway.name + distance_km`
 - `listed_date`
 
-**`serialize_property_detail(doc)`**
-Extended serializer for `property_detail` — adds:
+**`serialize_listing_detail(doc)`** — for `get_listing_detail`:
+All fields above, plus:
 - `description`, `key_features`
-- `power_supply` ← `traits.industrial.power_supply.amps` + `phase`
+- `power_supply` ← `traits.industrial.power_supply.amps + phase`
 - `loading_bays` ← `traits.industrial.loading_bays`
 - `office_area_sqft` ← `traits.industrial.office_area_sqft`
 - `overhead_crane` ← `traits.industrial.overhead_crane`
 - `completion_year` ← `traits.building.completion_year`
-- `nearest_highway/port/airport` ← `location.nearest.*`
+- `images` ← `images[]`
+- `nearest` ← `location.nearest` (highway, port, airport, mrt)
 - `key_distances` ← `location.key_distances`
 - `similar_listing_id`
 
 ---
 
-## Agent Responsibilities (not tool responsibilities)
+## Agent Behaviour
 
-- If `total_found = 0` and `locality` was set → ask user if they want to broaden location
-- If `total_found` is thin (< 3) → present results, ask if user wants to expand scope
-- If semantic ran but re-ranking didn't change much → no need to mention it
-- `offer_type` — don't force a choice. Surface both sale and rent options if unspecified, let user gravitate toward affordability
-- Proximity thresholds: when user says "near highway" without a distance, default `max_highway_km=5.0`; "near port" → `max_port_km=30.0`; "near airport" → `max_airport_km=20.0`
+### Opening message
+Brief, friendly. States regions covered (Klang Valley, Selangor, KL, Negeri Sembilan) and property types available. Gives 2-3 example queries. Does not show listings — nothing to show yet.
+
+### First message handling
+Always search immediately. Show top 5 with "why recommended" comments. Ask one open question: *"Do any of these look close to what you need, or what are you after?"*
+
+Exception: if first search returns 0 results, broaden silently once (drop location). If still 0, surface live agent immediately.
+
+### Top 5 recommendation comments
+- Generated from `get_listing_detail` data (called in parallel for all 5)
+- Anchored to user's stated needs vs real listing fields
+- Skipped when user has stated no requirements yet (first broad search)
+- Never fabricated — only reference fields present in the data
+
+### Overflow URL
+When `total_found > 5`, append a listing page URL encoding active filters:
+```
+https://www.industrialprop.com.my/api/listings?category=factory&location=Shah+Alam&max_price=5000000
+```
+Note: `ceiling_height` parameter in URL is in **feet** — convert from `ceiling_height_m` before constructing URL (1m = 3.281ft).
+
+### Refinement loop
+- User rejects top 5 → ask why + show next 5 simultaneously
+- Filters change → always re-call `find_listings` (never filter in-memory)
+- Sort/compare/describe existing results → use conversation context + `shown_property_ids`
+- All results exhausted → broaden: drop location first, then price range, then category
+
+### Live agent CTA
+Emitted as `live_agent_cta` SSE event. Fires once per trigger, agent continues helping regardless.
+
+**Triggers:**
+1. Transact intent — viewing, offer, negotiation
+2. Hyper-specific requirement the AI can't match from data
+3. No match after all broadening attempts exhausted
+4. Investment analysis beyond what listing data supports ("yield?", "will this appreciate?")
+5. Context window full — agent cannot maintain conversation reliably
+
+### Language
+Respond in the same language the user writes in. Property names, spec units, and URLs stay in their original form.
+
+### Off-topic
+Hard boundary. Redirect to industrial property search. Do not engage with unrelated topics.
+
+### Conversation reset
+*"Start over"* / *"Forget everything"* → clear `shown_property_ids` and `active_filters` from LangGraph state, restart fresh.
+
+### Property comparison
+Call `get_listing_detail` in parallel for both properties. Present as structured side-by-side comparison in text stream.
+
+### Follow-up chips
+2-3 short action strings emitted as `follow_up_chips` SSE event after every response.
+Format: *"Factories in Shah Alam under RM3M"*, *"Show me bigger options"*, *"Speak to our agent"* (from turn 3 onward).
+
+---
+
+## SSE Output Events
+
+```
+text_chunk              → streaming text words
+property_cards          → { listings: [...] }   (Stage 1 results)
+property_cards_reranked → { listings: [...] }   (Stage 2 re-ranked)
+listing_detail_card     → { listing: {...} }    (single full detail)
+follow_up_chips         → { chips: ["...", "..."] }
+live_agent_cta          → { trigger: str }
+search_complete         → { total_found: int }
+```
+
+No final JSON blob. Frontend assembles UI entirely from the event stream.
 
 ---
 
@@ -243,10 +318,15 @@ Extended serializer for `property_detail` — adds:
 
 | V4 | V5 | Reason |
 |---|---|---|
-| `properties_by_radius.py` | Dropped | LLM knows Malaysian geography; "near X" handled by locality + proximity filters |
-| `newest_listings.py` | Dropped | Covered by `sort_by="newest"` in `search_properties` |
-| Import from `agent.v2.utility` | Dropped | Self-contained serializer in `_utils.py` |
-| Hard-gate on Stage 1 zero results | Dropped | Honest return + agent handles fallback |
-| Auto-broadening fallback | Dropped | Human-in-the-loop |
-| Free-text regex on location fields | Dropped | Alias-based `$in` matching — more reliable |
-| "Near highway/port" as semantic query | Dropped | Structured proximity filters in Stage 1 |
+| `search_properties` | Renamed `find_listings` | Clearer agent tool selection |
+| `property_detail` | Renamed `get_listing_detail` | Clearer agent tool selection |
+| `properties_by_radius.py` | Dropped | Proximity filters in `find_listings` cover this |
+| `newest_listings.py` | Dropped | Covered by `sort_by="newest"` in `find_listings` |
+| Imports from `agent.v2.utility` | Dropped | Self-contained `_utils.py` |
+| Hard-gate on Stage 1 zero results | Dropped | Honest return + agent broadens |
+| 100-candidate cap | Dropped | Returns all matching documents |
+| Free-text regex on location | Dropped | Alias-based `$in` matching |
+| "Near highway/port" as semantic query | Dropped | Structured proximity filters |
+| Prompt-level JSON state block | Dropped | LangGraph state + conversation history |
+| Silent auto-broadening inside tools | Dropped | Agent-level broadening with human-in-the-loop |
+| Final JSON blob output | Dropped | Full SSE event stream |
