@@ -649,3 +649,120 @@ async def stream_v4(request: V4ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ─────────────────────────────────────────
+# POST /api/v5/invoke
+# ─────────────────────────────────────────
+class V5ChatRequest(BaseModel):
+    message: str
+    thread_id: Optional[str] = None
+
+
+@app.post("/api/v5/invoke")
+async def invoke_v5(request: V5ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v5/invoke] thread={thread_id}")
+
+    try:
+        from agent.v5.orchestration import create_agent as create_v5_agent
+
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+            agent = create_v5_agent(checkpointer)
+
+            response = await agent.ainvoke(
+                {"messages": request.message},
+                {"configurable": {"thread_id": thread_id}},
+                version="v2",
+            )
+
+        structured = response["structured_response"]
+
+        return JSONResponse(
+            content={
+                "thread_id": thread_id,
+                "follow_up_chips": structured.follow_up_chips,
+                "live_agent_cta": structured.live_agent_cta,
+                "live_agent_trigger": structured.live_agent_trigger,
+                "status": "success",
+            },
+            status_code=200,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v5/invoke] error: {e}\n{traceback.format_exc()}")
+        return _build_error_response(request, e)
+
+
+# ─────────────────────────────────────────
+# POST /api/v5/stream
+# ─────────────────────────────────────────
+@app.post("/api/v5/stream")
+async def stream_v5(request: V5ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v5/stream] thread={thread_id}")
+
+    from agent.v5.orchestration import create_agent as _create_v5_agent
+
+    async def _event_generator():
+        try:
+            async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                await checkpointer.setup()
+                agent = _create_v5_agent(checkpointer)
+
+                structured = None
+
+                async for raw_event in agent.astream(
+                    {"messages": request.message},
+                    {"configurable": {"thread_id": thread_id}},
+                    stream_mode=["updates", "messages", "custom"],
+                    subgraphs=True,
+                    version="v2",
+                ):
+                    if not (isinstance(raw_event, tuple) and len(raw_event) == 3):
+                        continue
+                    type_, ns, data = raw_event
+
+                    # Capture structured response when available
+                    if type_ == "updates" and isinstance(data, dict):
+                        sr = (data.get("agent") or {}).get("structured_response")
+                        if sr:
+                            structured = sr
+
+                    event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
+                    yield _build_sse_line(event)
+
+                # After stream: emit follow_up_chips and live_agent_cta
+                if structured:
+                    if structured.follow_up_chips:
+                        yield _build_sse_line({
+                            "type": "custom", "ns": [],
+                            "data": {"event": "follow_up_chips", "chips": structured.follow_up_chips},
+                        })
+                    if structured.live_agent_cta:
+                        yield _build_sse_line({
+                            "type": "custom", "ns": [],
+                            "data": {"event": "live_agent_cta", "trigger": structured.live_agent_trigger},
+                        })
+
+        except Exception as e:
+            logger.error(f"[v5/stream] error: {e}\n{traceback.format_exc()}")
+            yield _build_sse_line({
+                "type": "custom", "ns": [],
+                "data": {"event": "stream_error", "error": str(e)},
+            })
+
+    return _StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
