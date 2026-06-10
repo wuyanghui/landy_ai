@@ -680,14 +680,18 @@ async def invoke_v5(request: V5ChatRequest):
                 version="v2",
             )
 
-        structured = response["structured_response"]
+        # model may occasionally skip the structured-output tool call
+        try:
+            structured = response["structured_response"]
+        except KeyError:
+            structured = None
 
         return JSONResponse(
             content={
                 "thread_id": thread_id,
-                "follow_up_chips": structured.follow_up_chips,
-                "live_agent_cta": structured.live_agent_cta,
-                "live_agent_trigger": structured.live_agent_trigger,
+                "follow_up_chips": structured.follow_up_chips if structured else [],
+                "live_agent_cta": structured.live_agent_cta if structured else False,
+                "live_agent_trigger": structured.live_agent_trigger if structured else None,
                 "status": "success",
             },
             status_code=200,
@@ -713,6 +717,10 @@ async def stream_v5(request: V5ChatRequest):
 
     from agent.v5.orchestration import create_agent as _create_v5_agent
 
+    def _build_v5_sse_line(payload: dict) -> str:
+        # updates/messages payloads contain LangChain message objects
+        return f"data: {json.dumps(payload, default=str)}\n\n"
+
     async def _event_generator():
         try:
             async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
@@ -728,35 +736,44 @@ async def stream_v5(request: V5ChatRequest):
                     subgraphs=True,
                     version="v2",
                 ):
-                    if not (isinstance(raw_event, tuple) and len(raw_event) == 3):
+                    # langgraph >= 1.1 yields dicts; older versions yield 3-tuples
+                    if isinstance(raw_event, dict):
+                        type_ = raw_event.get("type")
+                        ns = raw_event.get("ns")
+                        data = raw_event.get("data")
+                    elif isinstance(raw_event, tuple) and len(raw_event) == 3:
+                        type_, ns, data = raw_event
+                    else:
                         continue
-                    type_, ns, data = raw_event
 
-                    # Capture structured response when available
+                    # Capture structured response from whichever node emits it
                     if type_ == "updates" and isinstance(data, dict):
-                        sr = (data.get("agent") or {}).get("structured_response")
-                        if sr:
-                            structured = sr
+                        for node_update in data.values():
+                            if isinstance(node_update, dict) and node_update.get("structured_response"):
+                                structured = node_update["structured_response"]
+
+                    if type_ == "messages" and isinstance(data, tuple) and data:
+                        data = {"content": getattr(data[0], "content", "")}
 
                     event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
-                    yield _build_sse_line(event)
+                    yield _build_v5_sse_line(event)
 
                 # After stream: emit follow_up_chips and live_agent_cta
                 if structured:
                     if structured.follow_up_chips:
-                        yield _build_sse_line({
+                        yield _build_v5_sse_line({
                             "type": "custom", "ns": [],
                             "data": {"event": "follow_up_chips", "chips": structured.follow_up_chips},
                         })
                     if structured.live_agent_cta:
-                        yield _build_sse_line({
+                        yield _build_v5_sse_line({
                             "type": "custom", "ns": [],
                             "data": {"event": "live_agent_cta", "trigger": structured.live_agent_trigger},
                         })
 
         except Exception as e:
             logger.error(f"[v5/stream] error: {e}\n{traceback.format_exc()}")
-            yield _build_sse_line({
+            yield _build_v5_sse_line({
                 "type": "custom", "ns": [],
                 "data": {"event": "stream_error", "error": str(e)},
             })

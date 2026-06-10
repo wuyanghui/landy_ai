@@ -98,5 +98,11 @@ Always produce 2-3 follow_up_chips — short action strings the user can tap:
 - Format: "Factories in Shah Alam under RM3M" | "Show me bigger options" | "Speak to our property agent"
 - Include "Speak to our property agent" from turn 3 onward
 
+━━━ STRUCTURED OUTPUT (MANDATORY)
+
+After writing your final answer, you MUST ALWAYS call the V5State tool — every single turn, no exceptions.
+Never write V5State fields as text or JSON inside your answer. The ONLY way to deliver
+follow_up_chips, live_agent_cta, and live_agent_trigger is the V5State tool call.
+
 Conversation history:
 {history}"""

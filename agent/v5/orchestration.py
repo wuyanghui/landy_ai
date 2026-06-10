@@ -1,5 +1,5 @@
 from deepagents import create_deep_agent
-from langchain.agents.structured_output import ProviderStrategy
+from langchain.agents.structured_output import ToolStrategy
 
 from agent.v5.config import DEFAULT_MODEL
 from agent.v5.state import V5State
@@ -14,6 +14,7 @@ def create_agent(checkpointer):
         model=load_llm(DEFAULT_MODEL),
         tools=[find_listings, get_listing_detail],
         system_prompt=AGENT_PROMPT,
-        response_format=ProviderStrategy(V5State),
+        # mercury-2 ignores provider-native json_schema shapes; tool-calling is reliable
+        response_format=ToolStrategy(V5State),
         checkpointer=checkpointer,
     )
