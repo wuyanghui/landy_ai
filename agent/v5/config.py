@@ -1,1 +1,1 @@
-DEFAULT_MODEL = "inception/mercury-2"
+DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
