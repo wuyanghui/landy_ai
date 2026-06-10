@@ -680,11 +680,10 @@ async def invoke_v5(request: V5ChatRequest):
                 version="v2",
             )
 
-        # model may occasionally skip the structured-output tool call
-        try:
-            structured = response["structured_response"]
-        except KeyError:
-            structured = None
+        # langgraph >= 1.1 returns GraphOutput (dict access deprecated) — unwrap .value;
+        # structured_response is absent when the model skips the output tool call
+        output = getattr(response, "value", response)
+        structured = output.get("structured_response")
 
         return JSONResponse(
             content={
