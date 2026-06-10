@@ -63,3 +63,9 @@ def get_property_listing_collections():
     db = client["property"]
     collection = db["property_listing"]
     return collection
+
+def get_enriched_property_listing_collections():
+    client = _ensure_client()
+    db = client["property"]
+    collection = db["enriched_property_listing"]
+    return collection

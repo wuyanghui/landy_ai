@@ -5,11 +5,11 @@ from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 
 from agent.v5.tools._utils import serialize_listing_detail
-from utility.property_listing_init import get_property_listing_collections
+from utility.property_listing_init import get_enriched_property_listing_collections
 
 
 def _fetch_doc(property_id: str) -> Optional[Dict[str, Any]]:
-    collection = get_property_listing_collections()
+    collection = get_enriched_property_listing_collections()
     try:
         pid = int(property_id)
     except (ValueError, TypeError):

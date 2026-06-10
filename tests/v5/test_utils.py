@@ -136,6 +136,15 @@ def test_serialize_listing_missing_hierarchy_graceful():
     assert s["industrial_park"] is None
 
 
+def test_serialize_listing_real_schema_key_features():
+    """enriched_property_listing stores features under key_features, not extracted_key_features."""
+    doc = _make_doc()
+    del doc["extracted_key_features"]
+    doc["key_features"] = ["dock leveler", "3-phase power"]
+    s = serialize_listing(doc)
+    assert s["extracted_key_features"] == ["dock leveler", "3-phase power"]
+
+
 # ── serialize_listing_detail ──────────────────────────────────────────────────
 
 def test_serialize_detail_includes_description():
@@ -157,6 +166,15 @@ def test_serialize_detail_includes_images():
 def test_serialize_detail_includes_similar_listing_id():
     d = serialize_listing_detail(_make_doc())
     assert d["similar_listing_id"] == [10, 11]
+
+
+def test_serialize_detail_real_schema_similar_listing_ids():
+    """enriched_property_listing stores this as similar_listing_ids (plural)."""
+    doc = _make_doc()
+    del doc["similar_listing_id"]
+    doc["similar_listing_ids"] = [20, 21]
+    d = serialize_listing_detail(doc)
+    assert d["similar_listing_id"] == [20, 21]
 
 
 def test_serialize_detail_includes_nearest():

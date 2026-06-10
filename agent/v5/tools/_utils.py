@@ -53,7 +53,8 @@ def serialize_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
         "nearest_highway": {"name": highway.get("name"), "distance_km": highway.get("distance_km")} if highway else None,
         "listed_date": listed_date.isoformat() if listed_date else None,
         "ai_summary": doc.get("ai_summary"),
-        "extracted_key_features": doc.get("extracted_key_features") or [],
+        # enriched_property_listing stores this as key_features
+        "extracted_key_features": doc.get("extracted_key_features") or doc.get("key_features") or [],
         "investment_highlights": doc.get("investment_highlights") or [],
         "target_buyer_personas": doc.get("target_buyer_personas") or [],
     }
@@ -79,6 +80,7 @@ def serialize_listing_detail(doc: Dict[str, Any]) -> Dict[str, Any]:
         "images": doc.get("images") or [],
         "nearest": location.get("nearest"),
         "key_distances": location.get("key_distances"),
-        "similar_listing_id": doc.get("similar_listing_id") or [],
+        # enriched_property_listing stores this as similar_listing_ids
+        "similar_listing_id": doc.get("similar_listing_id") or doc.get("similar_listing_ids") or [],
     })
     return base

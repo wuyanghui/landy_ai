@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 
 from agent.v5.tools._utils import expand_property_category, serialize_listing
-from utility.property_listing_init import get_property_listing_collections
+from utility.property_listing_init import get_enriched_property_listing_collections
 
 
 def _build_location_clause(locality: str) -> Dict:
@@ -97,7 +97,7 @@ _SORT_MAP = {
 
 
 def _run_query(filters: Dict, sort_by: Optional[str]) -> List[Dict]:
-    collection = get_property_listing_collections()
+    collection = get_enriched_property_listing_collections()
     cursor = collection.find(filters)
     if sort_by and sort_by in _SORT_MAP:
         cursor = cursor.sort(_SORT_MAP[sort_by])
