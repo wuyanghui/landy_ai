@@ -1,5 +1,5 @@
 # Agent V5 Design Spec
-**Date:** 2026-05-28 (updated 2026-06-09)
+**Date:** 2026-05-28 (updated 2026-06-10)
 **Project:** Landy.ai — Malaysia Industrial Property AI
 **Scope:** Clean-slate rebuild of agent tools, orchestration, and retrieval strategy
 
@@ -19,7 +19,7 @@ V5 is a full clean-slate rebuild targeting the new DB schema (schema_version: 1)
 The agent always searches and shows results immediately — even on vague first messages. It asks one open guiding question alongside the results. Users who don't know how to interact with AI learn from reacting to results, not from answering structured questions upfront.
 
 ### Top 5 with "why" comments
-The agent surfaces the 5 best-matched listings with a short comment per listing explaining why it was recommended, anchored to real listing data and the user's stated needs. Calls `get_listing_detail` for all 5 in parallel to get rich data for the comments.
+The agent surfaces the 5 best-matched listings with a short comment per listing explaining why it was recommended, anchored to real listing data and the user's stated needs. The LLM reasons over `extracted_key_features`, `investment_highlights`, and `target_buyer_personas` already present in `find_listings` results — no extra tool calls needed for the comments.
 
 ### Listing page URL for overflow
 When results exceed 5, the agent drops a URL to the listing page with query parameters encoding the active filters. Users explore the full result set on the website. The agent handles discovery; the website handles browsing.
@@ -36,8 +36,8 @@ The new schema embeds an `aliases` array at every hierarchy level. Matching uses
 ### Proximity is a structured filter, not semantic
 `location.nearest.highway/port/airport.distance_km` are indexed fields. "Near a highway", "close to Port Klang" are MongoDB Stage 1 filters — not Upstash query strings.
 
-### Semantic search is for qualitative features only
-Upstash surfaces description-level requirements no structured field captures: "solar panel ready", "cold storage", "ramp access", "raised floor". Never put location, distances, or numbers in the query string.
+### No semantic layer — LLM reasons over extracted features
+Upstash is dropped entirely. The new schema includes `extracted_key_features` (LLM-extracted bullet points per listing), `investment_highlights` (structured investment tags), and `target_buyer_personas` (buyer intent tags). These are included in `find_listings` results. The agent LLM reads them across all candidates and picks the top 5 most relevant — no vector infrastructure needed.
 
 ### Reason from data, hand off speculation
 Agent can reason about operational fit using real data: highway access, industrial zone maturity, proximity to port. When pushed into investment analysis ("what's the yield?", "will this appreciate?") — the agent doesn't have that data and surfaces the live agent instead of speculating.
@@ -100,7 +100,7 @@ agent/v5/
 │   └── agent_prompt.py
 └── tools/
     ├── _utils.py              # category expansion + serializers
-    ├── find_listings.py       # two-stage hybrid: MongoDB filter + Upstash semantic
+    ├── find_listings.py       # MongoDB structured filter, returns enriched results for LLM reasoning
     └── get_listing_detail.py  # single full document fetch, designed for parallel calls
 ```
 
@@ -145,37 +145,36 @@ class OverallState(TypedDict):
 | `max_airport_km` | `float \| None` | Use for "near airport", "near KLIA". Default 20.0 when implied. |
 | `sort_by` | `"newest" \| "price_asc" \| "price_desc" \| None` | Ignored if semantic stage runs. |
 
-**Stage 1 — MongoDB**
+**MongoDB query**
 - Hard filters: `listing_status = "active"`, category (expanded), price, sizes, ceiling height, floor loading, offer_type, proximity
-- Location: `locality` → `$in` on `city.aliases` + `industrial_park.aliases`; `region` → `$in` on `state.aliases`
+- Location matching (applied as `$or`):
+  - `location.hierarchy.city.name` — case-insensitive regex
+  - `location.hierarchy.city.aliases` — `$in` (input lowercased)
+  - `location.hierarchy.city.slug` — `$in` (input lowercased, spaces → hyphens)
+  - `location.hierarchy.industrial_park.name` — case-insensitive regex
+  - `location.hierarchy.industrial_park.aliases` — `$in` (input lowercased)
+  - `location.hierarchy.industrial_park.slug` — `$in`
+  - `location.hierarchy.state.name` — case-insensitive regex (for `region` param)
+  - `location.hierarchy.state.aliases` — `$in` (for `region` param)
 - No candidate cap — returns all matching documents
-- Streams `property_cards` immediately with serialized results
-
-**Stage 2 — Upstash**
-- Runs only when `query.strip()` is non-empty
-- `data=query`, Upstash handles embedding server-side (cron warmup handles cold starts)
-- No candidate cap passed to Upstash filter — all Stage 1 IDs included
-- Streams `property_cards_reranked` with updated order
-- On failure: silently keeps Stage 1 order
+- Streams `property_cards` immediately
 
 **Return value:**
 ```json
 {
   "total_found": 12,
   "property_listing_result": [...],
-  "stage": "mongodb+semantic",
   "filters_applied": "category=factory, locality=Shah Alam, price_max=5000000",
   "location_breakdown": ["Shah Alam", "Bukit Raja"],
-  "comment": "12 factories found in Shah Alam under RM5M. 8 re-ranked by cold storage relevance."
+  "comment": "12 factories found in Shah Alam under RM5M."
 }
 ```
 
 **SSE events:**
 ```
-search_start            → { filters_active: int, has_semantic_query: bool }
-property_cards          → { listings: [...], stage: "mongodb" }
-property_cards_reranked → { listings: [...], stage: "semantic" }
-search_complete         → { total_found: int, comment: str }
+search_start   → { filters_active: int }
+property_cards → { listings: [...] }
+search_complete → { total_found: int, comment: str }
 ```
 
 ---
@@ -225,6 +224,10 @@ listing_detail_card → { listing: {...} }
 - `floor_loading_kn_m2` ← `traits.industrial.floor_loading_kn_m2`
 - `nearest_highway` ← `location.nearest.highway.name + distance_km`
 - `listed_date`
+- `ai_summary` — one-sentence overview for LLM orientation
+- `extracted_key_features` — qualitative feature bullet points for LLM reasoning
+- `investment_highlights` — structured investment tags (e.g. "solar-ready", "newly-completed")
+- `target_buyer_personas` — intent tags (e.g. "logistics-operators", "ecommerce-fulfillment")
 
 **`serialize_listing_detail(doc)`** — for `get_listing_detail`:
 All fields above, plus:
@@ -252,10 +255,10 @@ Always search immediately. Show top 5 with "why recommended" comments. Ask one o
 Exception: if first search returns 0 results, broaden silently once (drop location). If still 0, surface live agent immediately.
 
 ### Top 5 recommendation comments
-- Generated from `get_listing_detail` data (called in parallel for all 5)
-- Anchored to user's stated needs vs real listing fields
+- Generated from enrichment fields already in `find_listings` results: `extracted_key_features`, `investment_highlights`, `target_buyer_personas`, `ai_summary`
+- Anchored to user's stated needs vs real listing data — no hallucination
 - Skipped when user has stated no requirements yet (first broad search)
-- Never fabricated — only reference fields present in the data
+- `get_listing_detail` called only when user asks for deeper detail on a specific listing
 
 ### Overflow URL
 When `total_found > 5`, append a listing page URL encoding active filters:
@@ -301,13 +304,12 @@ Format: *"Factories in Shah Alam under RM3M"*, *"Show me bigger options"*, *"Spe
 ## SSE Output Events
 
 ```
-text_chunk              → streaming text words
-property_cards          → { listings: [...] }   (Stage 1 results)
-property_cards_reranked → { listings: [...] }   (Stage 2 re-ranked)
-listing_detail_card     → { listing: {...} }    (single full detail)
-follow_up_chips         → { chips: ["...", "..."] }
-live_agent_cta          → { trigger: str }
-search_complete         → { total_found: int }
+text_chunk          → streaming text words
+property_cards      → { listings: [...] }   (find_listings results)
+listing_detail_card → { listing: {...} }    (get_listing_detail result)
+follow_up_chips     → { chips: ["...", "..."] }
+live_agent_cta      → { trigger: str }
+search_complete     → { total_found: int }
 ```
 
 No final JSON blob. Frontend assembles UI entirely from the event stream.
