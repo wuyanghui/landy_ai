@@ -6,7 +6,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agent.v5.tools._utils import expand_property_category, serialize_listing, serialize_listing_detail
+from agent.v5.tools._utils import (
+    expand_property_category,
+    serialize_chat_listing,
+    serialize_listing,
+    serialize_listing_detail,
+)
 
 
 def _make_doc(**overrides):
@@ -143,6 +148,69 @@ def test_serialize_listing_real_schema_key_features():
     doc["key_features"] = ["dock leveler", "3-phase power"]
     s = serialize_listing(doc)
     assert s["extracted_key_features"] == ["dock leveler", "3-phase power"]
+
+
+# ── serialize_chat_listing (frontend ChatListingCard contract) ────────────────
+
+def _chat_doc():
+    doc = _make_doc()
+    doc["location"]["geo"] = {"point": {"type": "Point", "coordinates": [101.74, 3.0]}}
+    doc["traits"]["industrial"]["power_supply"] = {"amps": 1000, "phase": 3, "voltage": None}
+    doc["is_featured"] = True
+    doc["updated_at"] = datetime(2026, 5, 1)
+    return doc
+
+
+def test_chat_listing_core_fields():
+    c = serialize_chat_listing(_chat_doc())
+    assert c["id"] == "42"
+    assert c["slug"] == "factory-shah-alam"
+    assert c["title"] == "Factory in Shah Alam"
+    assert c["price"] == 3_000_000
+    assert c["currency"] == "MYR"
+    assert c["type"] == "sale"
+    assert c["featured"] is True
+    assert c["updated_at"] == "2026-05-01T00:00:00"
+
+
+def test_chat_listing_category_type_combines():
+    c = serialize_chat_listing(_chat_doc())
+    assert c["category_type"] == ["factory", "detached-factory"]
+
+
+def test_chat_listing_location_shape():
+    c = serialize_chat_listing(_chat_doc())
+    loc = c["location"]
+    assert loc["area"] == "Hicom-Glenmarie Industrial Park"
+    assert loc["district"] == "Shah Alam"
+    assert loc["state"] == "Selangor"
+    # GeoJSON [lng, lat] must map to {lat, lng}
+    assert loc["coordinates"] == {"lat": 3.0, "lng": 101.74}
+
+
+def test_chat_listing_specifications_shape():
+    c = serialize_chat_listing(_chat_doc())
+    specs = c["specifications"]
+    assert specs["built_size"] == {"value": 20000.0, "unit": "sqft"}
+    assert specs["land_area"] == {"value": 35000.0, "unit": "sqft"}
+    assert specs["power_supply"] == {"value": 1000, "unit": "A (3-phase)"}
+
+
+def test_chat_listing_images_passthrough():
+    c = serialize_chat_listing(_chat_doc())
+    assert c["images"][0]["url"] == "https://example.com/img.webp"
+    assert c["images"][0]["is_primary"] is True
+
+
+def test_chat_listing_missing_optionals_graceful():
+    doc = _chat_doc()
+    doc["location"]["geo"] = None
+    doc["traits"]["industrial"]["power_supply"] = None
+    doc["built_up_area_sqft"] = None
+    c = serialize_chat_listing(doc)
+    assert c["location"]["coordinates"] == {"lat": None, "lng": None}
+    assert c["specifications"]["power_supply"] is None
+    assert c["specifications"]["built_size"] is None
 
 
 # ── serialize_listing_detail ──────────────────────────────────────────────────

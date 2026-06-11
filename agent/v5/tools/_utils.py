@@ -60,6 +60,59 @@ def serialize_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def serialize_chat_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape consumed directly by the frontend ChatListingCard
+    (industrialprop_FE app/landy-ai/types.ts ChatListing)."""
+    offer = doc.get("offer") or {}
+    location = doc.get("location") or {}
+    hierarchy = location.get("hierarchy") or {}
+    address = location.get("address") or {}
+    industrial = (doc.get("traits") or {}).get("industrial") or {}
+    power = industrial.get("power_supply") or {}
+    updated_at = doc.get("updated_at")
+
+    # GeoJSON point is [lng, lat]
+    point = ((location.get("geo") or {}).get("point") or {}).get("coordinates") or []
+    lng = point[0] if len(point) > 0 else None
+    lat = point[1] if len(point) > 1 else None
+
+    def _name(node: Optional[Dict]) -> Optional[str]:
+        return (node or {}).get("name")
+
+    power_spec = None
+    if power.get("amps") is not None:
+        unit = f"A ({power['phase']}-phase)" if power.get("phase") else "A"
+        power_spec = {"value": power["amps"], "unit": unit}
+
+    return {
+        "id": str(doc.get("property_id", "")),
+        "slug": doc.get("slug", ""),
+        "title": doc.get("title", ""),
+        "price": offer.get("price"),
+        "currency": offer.get("currency"),
+        "type": offer.get("offer_type"),
+        "category_type": list(dict.fromkeys(
+            ([doc["main_category"]] if doc.get("main_category") else [])
+            + (doc.get("sub_categories") or [])
+        )),
+        "location": {
+            "address": address.get("street") or None,
+            "area": _name(hierarchy.get("industrial_park")),
+            "district": _name(hierarchy.get("city")),
+            "state": _name(hierarchy.get("state")),
+            "coordinates": {"lat": lat, "lng": lng},
+        },
+        "specifications": {
+            "built_size": {"value": doc["built_up_area_sqft"], "unit": "sqft"} if doc.get("built_up_area_sqft") else None,
+            "land_area": {"value": doc["land_size_sqft"], "unit": "sqft"} if doc.get("land_size_sqft") else None,
+            "power_supply": power_spec,
+        },
+        "images": doc.get("images") or [],
+        "featured": bool(doc.get("is_featured", False)),
+        "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
+    }
+
+
 def serialize_listing_detail(doc: Dict[str, Any]) -> Dict[str, Any]:
     base = serialize_listing(doc)
     location = doc.get("location") or {}

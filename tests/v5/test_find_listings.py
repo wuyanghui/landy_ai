@@ -111,6 +111,12 @@ def test_emits_property_cards_when_results(monkeypatch):
     card_events = [e for e in events if e["event"] == "property_cards"]
     assert len(card_events) == 1
     assert len(card_events[0]["listings"]) == 1
+    # cards carry the frontend ChatListing shape, not the LLM-facing flat shape
+    card = card_events[0]["listings"][0]
+    assert card["id"] == "1"
+    assert card["type"] == "sale"
+    assert "specifications" in card
+    assert "coordinates" in card["location"]
 
 
 # ── MongoDB query builder ─────────────────────────────────────────────────────

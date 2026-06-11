@@ -5,7 +5,7 @@ from typing import Literal, List, Optional, Dict, Any
 from langchain_core.tools import tool
 from langgraph.config import get_stream_writer
 
-from agent.v5.tools._utils import expand_property_category, serialize_listing
+from agent.v5.tools._utils import expand_property_category, serialize_chat_listing, serialize_listing
 from utility.property_listing_init import get_enriched_property_listing_collections
 
 
@@ -161,7 +161,8 @@ async def find_listings(
     results = [serialize_listing(doc) for doc in docs]
 
     if results:
-        writer({"event": "property_cards", "listings": results})
+        # frontend ChatListingCard shape — the LLM gets the flat `results` instead
+        writer({"event": "property_cards", "listings": [serialize_chat_listing(doc) for doc in docs]})
 
     def _unique(key):
         return list(dict.fromkeys(r[key] for r in results if r.get(key)))
