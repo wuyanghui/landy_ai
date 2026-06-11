@@ -752,7 +752,21 @@ async def stream_v5(request: V5ChatRequest):
                                 structured = node_update["structured_response"]
 
                     if type_ == "messages" and isinstance(data, tuple) and data:
-                        data = {"content": getattr(data[0], "content", "")}
+                        msg = data[0]
+                        # only AI answer tokens — tool results and the structured-output
+                        # acknowledgement must not leak into the chat bubble
+                        mtype = str(getattr(msg, "type", ""))
+                        if not (mtype == "ai" or mtype.startswith("AIMessage")):
+                            continue
+                        content = getattr(msg, "content", "")
+                        if isinstance(content, list):
+                            content = "".join(
+                                b.get("text", "") if isinstance(b, dict) else str(b)
+                                for b in content
+                            )
+                        if not content:
+                            continue
+                        data = {"content": content}
 
                     event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
                     yield _build_v5_sse_line(event)
