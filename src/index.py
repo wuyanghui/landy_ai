@@ -722,6 +722,12 @@ async def stream_v5(request: V5ChatRequest):
 
     async def _event_generator():
         try:
+            # announce the thread id first so clients can persist it for multi-turn
+            yield _build_v5_sse_line({
+                "type": "custom", "ns": [],
+                "data": {"event": "thread_id", "thread_id": thread_id},
+            })
+
             async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
                 await checkpointer.setup()
                 agent = _create_v5_agent(checkpointer)

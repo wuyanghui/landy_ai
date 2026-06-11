@@ -48,3 +48,50 @@ def test_v5_invoke_rejects_empty_message():
     client = TestClient(app)
     resp = client.post("/api/v5/invoke", json={"message": ""})
     assert resp.status_code == 400
+
+
+# ── /api/v5/stream ────────────────────────────────────────────────────────────
+
+def _parse_sse(text: str):
+    import json as _json
+    events = []
+    for frame in text.split("\n\n"):
+        for line in frame.split("\n"):
+            if line.startswith("data: "):
+                events.append(_json.loads(line[6:]))
+    return events
+
+
+def test_v5_stream_emits_thread_id_first(monkeypatch):
+    from src.index import app
+
+    def fake_postgres(*a, **kw):
+        cp = AsyncMock()
+        cp.__aenter__ = AsyncMock(return_value=cp)
+        cp.__aexit__ = AsyncMock(return_value=None)
+        cp.setup = AsyncMock()
+        return cp
+
+    async def fake_astream(*a, **kw):
+        yield {"type": "custom", "ns": (), "data": {"event": "search_complete", "total_found": 3}}
+
+    agent = MagicMock()
+    agent.astream = fake_astream
+
+    with patch("src.index.AsyncPostgresSaver.from_conn_string", side_effect=fake_postgres):
+        with patch("agent.v5.orchestration.create_agent", return_value=agent):
+            client = TestClient(app)
+            resp = client.post("/api/v5/stream", json={"message": "factory", "thread_id": "t-123"})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(resp.text)
+    assert events[0]["data"] == {"event": "thread_id", "thread_id": "t-123"}
+    assert any(e["data"].get("event") == "search_complete" for e in events)
+
+
+def test_v5_stream_rejects_empty_message():
+    from src.index import app
+    client = TestClient(app)
+    resp = client.post("/api/v5/stream", json={"message": ""})
+    assert resp.status_code == 400
