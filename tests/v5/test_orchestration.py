@@ -52,6 +52,34 @@ def test_create_agent_uses_default_model(monkeypatch):
     assert captured_model["value"] == DEFAULT_MODEL
 
 
+def test_extract_v5_state_uses_forced_structured_output(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from agent.v5.state import V5State
+
+    captured = {}
+    structured_llm = MagicMock()
+    structured_llm.ainvoke = AsyncMock(
+        return_value=V5State(follow_up_chips=["a"], live_agent_cta=False, live_agent_trigger=None)
+    )
+    fake_llm = MagicMock()
+
+    def fake_with_structured_output(schema, method=None):
+        captured["schema"] = schema
+        captured["method"] = method
+        return structured_llm
+
+    fake_llm.with_structured_output = fake_with_structured_output
+    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model: fake_llm)
+
+    from agent.v5.orchestration import extract_v5_state
+    result = asyncio.run(extract_v5_state("user msg", "answer text"))
+
+    assert result.follow_up_chips == ["a"]
+    assert captured["schema"] is V5State
+    assert captured["method"] == "function_calling"
+
+
 def test_create_agent_passes_checkpointer(monkeypatch):
     captured = {}
     monkeypatch.setattr(

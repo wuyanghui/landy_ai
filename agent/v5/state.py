@@ -3,6 +3,9 @@ from pydantic import BaseModel, Field
 
 
 class V5State(BaseModel):
+    """UI metadata for one chat turn, extracted from the user message and the
+    assistant answer."""
+
     follow_up_chips: List[str] = Field(
         description="2-3 short action strings shown as clickable chips after the response"
     )

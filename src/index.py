@@ -652,6 +652,28 @@ async def stream_v4(request: V4ChatRequest):
 
 
 # ─────────────────────────────────────────
+# V5 helpers
+# ─────────────────────────────────────────
+def _v5_message_text(msg) -> str:
+    content = getattr(msg, "content", "")
+    if isinstance(content, list):
+        return "".join(
+            b.get("text", "") if isinstance(b, dict) else str(b) for b in content
+        )
+    return content if isinstance(content, str) else ""
+
+
+def _v5_final_answer(messages: list) -> str:
+    """Last non-empty AI text message — the user-facing answer for the turn."""
+    for msg in reversed(messages):
+        if str(getattr(msg, "type", "")) == "ai":
+            text = _v5_message_text(msg)
+            if text:
+                return text
+    return ""
+
+
+# ─────────────────────────────────────────
 # POST /api/v5/invoke
 # ─────────────────────────────────────────
 class V5ChatRequest(BaseModel):
@@ -668,7 +690,7 @@ async def invoke_v5(request: V5ChatRequest):
     logger.info(f"[v5/invoke] thread={thread_id}")
 
     try:
-        from agent.v5.orchestration import create_agent as create_v5_agent
+        from agent.v5.orchestration import create_agent as create_v5_agent, extract_v5_state
 
         async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
             await checkpointer.setup()
@@ -680,14 +702,20 @@ async def invoke_v5(request: V5ChatRequest):
                 version="v2",
             )
 
-        # langgraph >= 1.1 returns GraphOutput (dict access deprecated) — unwrap .value;
-        # structured_response is absent when the model skips the output tool call
+        # langgraph >= 1.1 returns GraphOutput (dict access deprecated) — unwrap .value
         output = getattr(response, "value", response)
-        structured = output.get("structured_response")
+        answer = _v5_final_answer(output.get("messages") or [])
+
+        try:
+            structured = await extract_v5_state(request.message, answer)
+        except Exception as extract_error:
+            logger.error(f"[v5/invoke] V5State extraction failed: {extract_error}")
+            structured = None
 
         return JSONResponse(
             content={
                 "thread_id": thread_id,
+                "answer": answer,
                 "follow_up_chips": structured.follow_up_chips if structured else [],
                 "live_agent_cta": structured.live_agent_cta if structured else False,
                 "live_agent_trigger": structured.live_agent_trigger if structured else None,
@@ -714,7 +742,7 @@ async def stream_v5(request: V5ChatRequest):
     thread_id = _get_thread_id(request)
     logger.info(f"[v5/stream] thread={thread_id}")
 
-    from agent.v5.orchestration import create_agent as _create_v5_agent
+    from agent.v5.orchestration import create_agent as _create_v5_agent, extract_v5_state
 
     def _build_v5_sse_line(payload: dict) -> str:
         # updates/messages payloads contain LangChain message objects
@@ -732,7 +760,7 @@ async def stream_v5(request: V5ChatRequest):
                 await checkpointer.setup()
                 agent = _create_v5_agent(checkpointer)
 
-                structured = None
+                answer_parts: list = []
 
                 async for raw_event in agent.astream(
                     {"messages": request.message},
@@ -751,33 +779,29 @@ async def stream_v5(request: V5ChatRequest):
                     else:
                         continue
 
-                    # Capture structured response from whichever node emits it
-                    if type_ == "updates" and isinstance(data, dict):
-                        for node_update in data.values():
-                            if isinstance(node_update, dict) and node_update.get("structured_response"):
-                                structured = node_update["structured_response"]
-
                     if type_ == "messages" and isinstance(data, tuple) and data:
                         msg = data[0]
-                        # only AI answer tokens — tool results and the structured-output
-                        # acknowledgement must not leak into the chat bubble
+                        # only AI answer tokens — tool results must not leak into the chat bubble
                         mtype = str(getattr(msg, "type", ""))
                         if not (mtype == "ai" or mtype.startswith("AIMessage")):
                             continue
-                        content = getattr(msg, "content", "")
-                        if isinstance(content, list):
-                            content = "".join(
-                                b.get("text", "") if isinstance(b, dict) else str(b)
-                                for b in content
-                            )
+                        content = _v5_message_text(msg)
                         if not content:
                             continue
+                        answer_parts.append(content)
                         data = {"content": content}
 
                     event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
                     yield _build_v5_sse_line(event)
 
-                # After stream: emit follow_up_chips and live_agent_cta
+                # After stream: extract chips/CTA from the answer with one forced
+                # structured-output call (the agent itself only produces text)
+                try:
+                    structured = await extract_v5_state(request.message, "".join(answer_parts))
+                except Exception as extract_error:
+                    logger.error(f"[v5/stream] V5State extraction failed: {extract_error}")
+                    structured = None
+
                 if structured:
                     if structured.follow_up_chips:
                         yield _build_v5_sse_line({
