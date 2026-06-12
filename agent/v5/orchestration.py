@@ -1,7 +1,7 @@
 from deepagents import create_deep_agent
 
 from agent.v5.reasoning_patch import apply_reasoning_patch
-from agent.v5.config import DEFAULT_MODEL
+from agent.v5.config import DEFAULT_MODEL, REASONING_EFFORT
 
 apply_reasoning_patch()
 from agent.v5.state import V5State
@@ -17,7 +17,7 @@ def create_agent(checkpointer):
     # the user-facing answer text. The agent ends turns with plain text (which
     # streams), and V5State is extracted afterwards by extract_v5_state.
     return create_deep_agent(
-        model=load_llm(DEFAULT_MODEL),
+        model=load_llm(DEFAULT_MODEL, reasoning_effort=REASONING_EFFORT),
         tools=[find_listings, get_listing_detail],
         system_prompt=AGENT_PROMPT,
         checkpointer=checkpointer,
@@ -41,7 +41,9 @@ Otherwise live_agent_cta=false, live_agent_trigger=null."""
 
 
 async def extract_v5_state(user_message: str, answer_text: str) -> V5State:
-    llm = load_llm(DEFAULT_MODEL).with_structured_output(V5State, method="function_calling")
+    llm = load_llm(DEFAULT_MODEL, reasoning_effort=REASONING_EFFORT).with_structured_output(
+        V5State, method="function_calling"
+    )
     return await llm.ainvoke([
         ("system", _EXTRACTOR_PROMPT),
         ("human", f"USER: {user_message}\n\nASSISTANT: {answer_text}"),

@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -16,7 +16,7 @@ def test_create_agent_returns_agent(monkeypatch):
         return mock_agent
 
     monkeypatch.setattr("agent.v5.orchestration.create_deep_agent", fake_create_deep_agent)
-    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model: MagicMock())
+    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model, **kw: MagicMock())
 
     from agent.v5.orchestration import create_agent
     result = create_agent(MagicMock())
@@ -29,27 +29,29 @@ def test_create_agent_passes_two_tools(monkeypatch):
         "agent.v5.orchestration.create_deep_agent",
         lambda **kw: captured.update(kw) or MagicMock(),
     )
-    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model: MagicMock())
+    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model, **kw: MagicMock())
 
     from agent.v5.orchestration import create_agent
     create_agent(MagicMock())
     assert len(captured["tools"]) == 2
 
 
-def test_create_agent_uses_default_model(monkeypatch):
-    captured_model = {}
+def test_create_agent_uses_default_model_and_reasoning_effort(monkeypatch):
+    captured = {}
 
-    def fake_load_llm(model):
-        captured_model["value"] = model
+    def fake_load_llm(model, **kwargs):
+        captured["model"] = model
+        captured.update(kwargs)
         return MagicMock()
 
     monkeypatch.setattr("agent.v5.orchestration.create_deep_agent", lambda **kw: MagicMock())
     monkeypatch.setattr("agent.v5.orchestration.load_llm", fake_load_llm)
 
     from agent.v5.orchestration import create_agent
-    from agent.v5.config import DEFAULT_MODEL
+    from agent.v5.config import DEFAULT_MODEL, REASONING_EFFORT
     create_agent(MagicMock())
-    assert captured_model["value"] == DEFAULT_MODEL
+    assert captured["model"] == DEFAULT_MODEL
+    assert captured["reasoning_effort"] == REASONING_EFFORT
 
 
 def test_extract_v5_state_uses_forced_structured_output(monkeypatch):
@@ -70,7 +72,7 @@ def test_extract_v5_state_uses_forced_structured_output(monkeypatch):
         return structured_llm
 
     fake_llm.with_structured_output = fake_with_structured_output
-    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model: fake_llm)
+    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model, **kw: fake_llm)
 
     from agent.v5.orchestration import extract_v5_state
     result = asyncio.run(extract_v5_state("user msg", "answer text"))
@@ -86,7 +88,7 @@ def test_create_agent_passes_checkpointer(monkeypatch):
         "agent.v5.orchestration.create_deep_agent",
         lambda **kw: captured.update(kw) or MagicMock(),
     )
-    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model: MagicMock())
+    monkeypatch.setattr("agent.v5.orchestration.load_llm", lambda model, **kw: MagicMock())
 
     from agent.v5.orchestration import create_agent
     fake_cp = MagicMock()
