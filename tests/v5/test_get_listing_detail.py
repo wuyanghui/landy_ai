@@ -100,3 +100,28 @@ def test_no_event_emitted_when_not_found(monkeypatch):
     )
     asyncio.run(gld_mod.get_listing_detail.ainvoke({"property_id": "999"}))
     assert not any(e["event"] == "listing_detail_card" for e in events)
+
+
+def test_emits_detail_start_and_complete(monkeypatch):
+    events = []
+    _patch(monkeypatch, _full_doc())
+    monkeypatch.setattr(
+        "agent.v5.tools.get_listing_detail.get_stream_writer",
+        lambda: lambda d: events.append(d),
+    )
+    asyncio.run(gld_mod.get_listing_detail.ainvoke({"property_id": "7"}))
+    types = [e["event"] for e in events]
+    assert types[0] == "detail_start"
+    assert types[-1] == "detail_complete"
+    assert events[-1]["found"] is True
+
+
+def test_detail_complete_found_false_when_missing(monkeypatch):
+    events = []
+    _patch(monkeypatch, None)
+    monkeypatch.setattr(
+        "agent.v5.tools.get_listing_detail.get_stream_writer",
+        lambda: lambda d: events.append(d),
+    )
+    asyncio.run(gld_mod.get_listing_detail.ainvoke({"property_id": "999"}))
+    assert events[-1] == {"event": "detail_complete", "found": False}

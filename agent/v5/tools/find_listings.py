@@ -148,7 +148,18 @@ async def find_listings(
         ceiling_height_min is not None, floor_loading_min is not None,
         max_highway_km is not None, max_port_km is not None, max_airport_km is not None,
     ])
-    writer({"event": "search_start", "filters_active": active_filters})
+    # applied filters let the frontend show the inference process to the user
+    applied = {k: v for k, v in {
+        "offer_type": offer_type, "category": property_category,
+        "locality": locality, "region": region,
+        "price_min": price_min, "price_max": price_max,
+        "built_up_sqft_min": built_up_sqft_min, "built_up_sqft_max": built_up_sqft_max,
+        "land_sqft_min": land_sqft_min, "land_sqft_max": land_sqft_max,
+        "ceiling_height_min": ceiling_height_min, "floor_loading_min": floor_loading_min,
+        "max_highway_km": max_highway_km, "max_port_km": max_port_km,
+        "max_airport_km": max_airport_km,
+    }.items() if v is not None}
+    writer({"event": "search_start", "filters_active": active_filters, "filters": applied})
 
     filters = _build_filters(
         offer_type, property_category, locality, region,

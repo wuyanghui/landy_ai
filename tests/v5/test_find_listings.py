@@ -100,6 +100,28 @@ def test_emits_search_start_and_complete(monkeypatch):
     assert "search_complete" in types
 
 
+def test_search_start_carries_applied_filters(monkeypatch):
+    events = []
+    _patch(monkeypatch, [])
+    monkeypatch.setattr(
+        "agent.v5.tools.find_listings.get_stream_writer",
+        lambda: lambda d: events.append(d),
+    )
+    asyncio.run(fl_mod.find_listings.ainvoke({
+        "offer_type": "rent",
+        "property_category": ["factory"],
+        "region": "Selangor",
+        "price_max": 200000,
+    }))
+    start = next(e for e in events if e["event"] == "search_start")
+    assert start["filters"] == {
+        "offer_type": "rent",
+        "category": ["factory"],
+        "region": "Selangor",
+        "price_max": 200000,
+    }
+
+
 def test_emits_property_cards_when_results(monkeypatch):
     events = []
     _patch(monkeypatch, [_fake_doc("1")])

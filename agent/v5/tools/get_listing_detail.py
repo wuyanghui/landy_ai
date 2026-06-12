@@ -26,11 +26,14 @@ async def get_listing_detail(property_id: str) -> Optional[Dict[str, Any]]:
     Do NOT call for price, size, or location — those are already in find_listings results.
     """
     writer = get_stream_writer()
+    writer({"event": "detail_start", "property_id": property_id})
 
     doc = await asyncio.to_thread(_fetch_doc, property_id)
     if doc is None:
+        writer({"event": "detail_complete", "found": False})
         return None
 
     detail = serialize_listing_detail(doc)
     writer({"event": "listing_detail_card", "listing": detail})
+    writer({"event": "detail_complete", "found": True})
     return detail
