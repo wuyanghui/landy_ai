@@ -135,6 +135,39 @@ def test_v5_stream_normalizes_tuple_events_and_drops_updates():
     )
 
 
+def test_reasoning_patch_preserves_reasoning_delta():
+    from agent.v5.reasoning_patch import apply_reasoning_patch
+    from langchain_openai.chat_models import base as oai_base
+    from langchain_core.messages import AIMessageChunk
+
+    apply_reasoning_patch()
+    chunk = oai_base._convert_delta_to_message_chunk(
+        {"role": "assistant", "content": "", "reasoning": "User wants a warehouse..."},
+        AIMessageChunk,
+    )
+    assert chunk.additional_kwargs["reasoning"] == "User wants a warehouse..."
+    # idempotent — applying again must not double-wrap
+    apply_reasoning_patch()
+    assert getattr(oai_base._convert_delta_to_message_chunk, "_v5_reasoning_patch", False)
+
+
+def test_v5_stream_emits_reasoning_frames_separately():
+    from langchain_core.messages import AIMessageChunk
+
+    async def fake_astream(*a, **kw):
+        yield {"type": "messages", "ns": (), "data": (
+            AIMessageChunk(content="", additional_kwargs={"reasoning": "thinking about Klang..."}), {})}
+        yield {"type": "messages", "ns": (), "data": (AIMessageChunk(content="Here are"), {})}
+
+    resp = _stream_response(fake_astream, _fake_state())
+    events = _parse_sse(resp.text)
+
+    reasoning = [e["data"]["content"] for e in events if e["type"] == "reasoning"]
+    tokens = [e["data"]["content"] for e in events if e["type"] == "messages"]
+    assert reasoning == ["thinking about Klang..."]
+    assert tokens == ["Here are"]  # reasoning never leaks into answer tokens
+
+
 def test_v5_stream_emits_extracted_chips_and_cta():
     async def fake_astream(*a, **kw):
         yield {"type": "messages", "ns": (), "data": ()}

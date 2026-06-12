@@ -1,6 +1,9 @@
 from deepagents import create_deep_agent
 
+from agent.v5.reasoning_patch import apply_reasoning_patch
 from agent.v5.config import DEFAULT_MODEL
+
+apply_reasoning_patch()
 from agent.v5.state import V5State
 from agent.v5.prompt.agent_prompt import AGENT_PROMPT
 from agent.v5.tools.find_listings import find_listings

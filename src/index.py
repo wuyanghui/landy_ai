@@ -796,6 +796,15 @@ async def stream_v5(request: V5ChatRequest):
                         mtype = str(getattr(msg, "type", ""))
                         if not (mtype == "ai" or mtype.startswith("AIMessage")):
                             continue
+                        # reasoning-model chain of thought (see agent/v5/reasoning_patch.py)
+                        # goes out as its own frame type, never into the answer
+                        ak = getattr(msg, "additional_kwargs", None) or {}
+                        reasoning = ak.get("reasoning")
+                        if reasoning:
+                            yield _build_v5_sse_line({
+                                "type": "reasoning", "ns": [],
+                                "data": {"content": reasoning},
+                            })
                         content = _v5_message_text(msg)
                         if not content:
                             continue
