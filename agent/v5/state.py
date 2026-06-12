@@ -14,5 +14,5 @@ class V5State(BaseModel):
     )
     live_agent_trigger: Optional[str] = Field(
         default=None,
-        description="Which trigger fired: transact_intent | hyper_specific | exhausted | investment | context_pressure"
+        description="Which trigger fired: transact_intent | hyper_specific | exhausted | investment | out_of_coverage"
     )

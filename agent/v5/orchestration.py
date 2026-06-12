@@ -35,6 +35,8 @@ live_agent_cta + live_agent_trigger: true with the matching trigger ONLY when th
 - hyper_specific: a requirement so specific the listings cannot match it
 - exhausted: no results remain even after broadening the search
 - investment: user asked for yield, appreciation, ROI, or market forecast figures
+- out_of_coverage: user asked about industrial property outside Klang Valley, Selangor,
+  KL or Negeri Sembilan (other states or countries) — a potential collaboration lead
 Otherwise live_agent_cta=false, live_agent_trigger=null."""
 
 
