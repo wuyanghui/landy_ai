@@ -85,6 +85,33 @@ def test_location_breakdown_in_return(monkeypatch):
     assert "Klang" in result["location_breakdown"]
 
 
+def test_llm_results_capped_but_total_found_full(monkeypatch):
+    """Large result sets are capped for the LLM (avoids framework file offload)
+    while total_found and the comment report the real count."""
+    _patch(monkeypatch, [_fake_doc(str(i)) for i in range(50)])
+    result = asyncio.run(fl_mod.find_listings.ainvoke({}))
+    assert result["total_found"] == 50
+    assert len(result["property_listing_result"]) == fl_mod.LLM_RESULT_LIMIT
+    assert "first 20 of 50" in result["comment"]
+    # slim shape: heavy fields dropped, enrichment trimmed
+    slim = result["property_listing_result"][0]
+    assert "thumbnail" not in slim
+    assert "sub_categories" not in slim
+    assert "title" in slim and "slug" in slim
+
+
+def test_cards_event_capped(monkeypatch):
+    events = []
+    _patch(monkeypatch, [_fake_doc(str(i)) for i in range(50)])
+    monkeypatch.setattr(
+        "agent.v5.tools.find_listings.get_stream_writer",
+        lambda: lambda d: events.append(d),
+    )
+    asyncio.run(fl_mod.find_listings.ainvoke({}))
+    cards = next(e for e in events if e["event"] == "property_cards")
+    assert len(cards["listings"]) == fl_mod.CARD_LIMIT
+
+
 # ── SSE events ────────────────────────────────────────────────────────────────
 
 def test_emits_search_start_and_complete(monkeypatch):

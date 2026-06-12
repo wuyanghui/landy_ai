@@ -95,6 +95,29 @@ _SORT_MAP = {
     "price_desc": [("offer.price", -1)],
 }
 
+# Keep the LLM-facing payload small enough that it never triggers the agent
+# framework's large-result file offload (which forces slow chunked re-reads),
+# and cap the card strip the frontend has to render.
+LLM_RESULT_LIMIT = 20
+CARD_LIMIT = 24
+
+_LLM_FIELDS = (
+    "property_id", "title", "slug", "offer_type", "price", "currency",
+    "city", "state", "industrial_park", "main_category", "tenure",
+    "built_up_sqft", "land_sqft", "ceiling_height_m", "floor_loading_kn_m2",
+    "nearest_highway", "listed_date",
+)
+
+
+def _slim_for_llm(listing: Dict[str, Any]) -> Dict[str, Any]:
+    slim = {k: listing.get(k) for k in _LLM_FIELDS}
+    summary = listing.get("ai_summary") or ""
+    slim["ai_summary"] = summary[:200]
+    slim["extracted_key_features"] = (listing.get("extracted_key_features") or [])[:4]
+    slim["investment_highlights"] = (listing.get("investment_highlights") or [])[:3]
+    slim["target_buyer_personas"] = (listing.get("target_buyer_personas") or [])[:4]
+    return slim
+
 
 def _run_query(filters: Dict, sort_by: Optional[str]) -> List[Dict]:
     collection = get_enriched_property_listing_collections()
@@ -172,8 +195,11 @@ async def find_listings(
     results = [serialize_listing(doc) for doc in docs]
 
     if results:
-        # frontend ChatListingCard shape — the LLM gets the flat `results` instead
-        writer({"event": "property_cards", "listings": [serialize_chat_listing(doc) for doc in docs]})
+        # frontend ChatListingCard shape — the LLM gets the slim flat shape instead
+        writer({
+            "event": "property_cards",
+            "listings": [serialize_chat_listing(doc) for doc in docs[:CARD_LIMIT]],
+        })
 
     def _unique(key):
         return list(dict.fromkeys(r[key] for r in results if r.get(key)))
@@ -188,10 +214,19 @@ async def find_listings(
 
     writer({"event": "search_complete", "total_found": len(results)})
 
+    shown = [_slim_for_llm(r) for r in results[:LLM_RESULT_LIMIT]]
+    truncation_note = (
+        f" Showing the first {len(shown)} of {len(results)} — refine filters to narrow down."
+        if len(results) > len(shown) else ""
+    )
+
     return {
         "total_found": len(results),
-        "property_listing_result": results,
+        "property_listing_result": shown,
         "filters_applied": filters_summary or "none",
         "location_breakdown": location_breakdown,
-        "comment": f"{len(results)} listing(s) found. Locations: {location_breakdown}." if results else "No matching listings found.",
+        "comment": (
+            f"{len(results)} listing(s) found. Locations: {location_breakdown}.{truncation_note}"
+            if results else "No matching listings found."
+        ),
     }
