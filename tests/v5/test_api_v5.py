@@ -112,6 +112,29 @@ def test_v5_stream_streams_ai_tokens_and_filters_tool_chunks():
     assert tokens == ["Hello ", "world"]  # tool chunk filtered out
 
 
+def test_v5_stream_normalizes_tuple_events_and_drops_updates():
+    """Production langgraph yields (namespace, mode, payload) tuples; some versions
+    yield (mode, namespace, payload). Both must normalize; updates frames are dropped."""
+    from langchain_core.messages import AIMessageChunk
+
+    async def fake_astream(*a, **kw):
+        yield ((), "custom", {"event": "search_complete", "total_found": 1})
+        yield ((), "messages", (AIMessageChunk(content="Hi"), {}))
+        yield ("messages", (), (AIMessageChunk(content=" there"), {}))
+        yield ((), "updates", {"model": {"messages": []}})
+
+    resp = _stream_response(fake_astream, _fake_state())
+    events = _parse_sse(resp.text)
+
+    assert all(e["type"] != "updates" for e in events)
+    tokens = [e["data"]["content"] for e in events if e["type"] == "messages"]
+    assert tokens == ["Hi", " there"]
+    assert any(
+        isinstance(e.get("data"), dict) and e["data"].get("event") == "search_complete"
+        for e in events
+    )
+
+
 def test_v5_stream_emits_extracted_chips_and_cta():
     async def fake_astream(*a, **kw):
         yield {"type": "messages", "ns": (), "data": ()}

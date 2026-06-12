@@ -769,14 +769,25 @@ async def stream_v5(request: V5ChatRequest):
                     subgraphs=True,
                     version="v2",
                 ):
-                    # langgraph >= 1.1 yields dicts; older versions yield 3-tuples
+                    # Event shape varies by langgraph version:
+                    #   dict {type, ns, data}, or 3-tuple in either
+                    #   (mode, namespace, payload) or (namespace, mode, payload) order
                     if isinstance(raw_event, dict):
                         type_ = raw_event.get("type")
                         ns = raw_event.get("ns")
                         data = raw_event.get("data")
                     elif isinstance(raw_event, tuple) and len(raw_event) == 3:
-                        type_, ns, data = raw_event
+                        first, second, data = raw_event
+                        if isinstance(first, str):
+                            type_, ns = first, second
+                        else:
+                            ns, type_ = first, second
                     else:
+                        continue
+
+                    # the frontend only consumes answer tokens and custom events;
+                    # updates frames are internal state dumps and dwarf the payload
+                    if type_ not in ("messages", "custom"):
                         continue
 
                     if type_ == "messages" and isinstance(data, tuple) and data:
