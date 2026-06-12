@@ -1,1 +1,1 @@
-DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+DEFAULT_MODEL = "deepseek/deepseek-v4-pro"
