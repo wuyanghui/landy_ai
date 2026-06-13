@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 from typing import Literal, List, Optional, Dict, Any
 
@@ -7,6 +8,40 @@ from langgraph.config import get_stream_writer
 
 from agent.v5.tools._utils import expand_property_category, serialize_chat_listing, serialize_listing
 from utility.property_listing_init import get_enriched_property_listing_collections
+
+logger = logging.getLogger(__name__)
+
+# Cached process-wide so the system prompt that embeds it stays byte-identical
+# across calls (preserves gateway prompt caching). Refreshes on process restart.
+_LOCATION_VOCAB_CACHE: Optional[str] = None
+
+
+def get_location_vocabulary() -> str:
+    """Distinct place names per hierarchy level, formatted for the system prompt
+    so the agent classifies a user's location to the right level (e.g. knows
+    Klang is a district). Cached; fail-soft (returns "" without caching on error
+    so it retries next time and the agent still works without it)."""
+    global _LOCATION_VOCAB_CACHE
+    if _LOCATION_VOCAB_CACHE is not None:
+        return _LOCATION_VOCAB_CACHE
+    try:
+        col = get_enriched_property_listing_collections()
+        levels = [
+            ("Regions (states)", "location.hierarchy.state.name"),
+            ("Districts", "location.hierarchy.district.name"),
+            ("Cities / towns", "location.hierarchy.city.name"),
+            ("Industrial parks", "location.hierarchy.industrial_park.name"),
+        ]
+        lines = []
+        for label, field in levels:
+            vals = sorted({v.strip() for v in col.distinct(field) if v and v.strip()})
+            if vals:
+                lines.append(f"- {label}: {', '.join(vals)}")
+        _LOCATION_VOCAB_CACHE = "\n".join(lines)
+        return _LOCATION_VOCAB_CACHE
+    except Exception as exc:
+        logger.error(f"[find_listings] location vocabulary fetch failed: {exc}")
+        return ""
 
 
 # A locality can be a city, district, industrial park, or suburb — all are in

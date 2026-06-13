@@ -2,9 +2,17 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+@pytest.fixture(autouse=True)
+def _stub_location_vocab(monkeypatch):
+    # keep create_agent off the live DB in unit tests
+    monkeypatch.setattr("agent.v5.orchestration.get_location_vocabulary", lambda: "")
 
 
 def test_create_agent_returns_agent(monkeypatch):

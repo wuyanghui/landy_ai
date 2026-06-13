@@ -6,9 +6,17 @@ from agent.v5.config import DEFAULT_MODEL, REASONING_EFFORT
 apply_reasoning_patch()
 from agent.v5.state import V5State
 from agent.v5.prompt.agent_prompt import AGENT_PROMPT
-from agent.v5.tools.find_listings import find_listings
+from agent.v5.tools.find_listings import find_listings, get_location_vocabulary
 from agent.v5.tools.get_listing_detail import get_listing_detail
 from utility.llm_init import load_llm
+
+
+def _build_system_prompt() -> str:
+    # Inject the real location vocabulary so the agent classifies a place to the
+    # right level (district vs city vs state). Cached + sorted, so the prefix
+    # stays byte-stable and gateway prompt caching is preserved.
+    vocab = get_location_vocabulary() or "(location list unavailable)"
+    return AGENT_PROMPT.replace("{known_locations}", vocab)
 
 
 def create_agent(checkpointer):
@@ -19,7 +27,7 @@ def create_agent(checkpointer):
     return create_deep_agent(
         model=load_llm(DEFAULT_MODEL, reasoning_effort=REASONING_EFFORT),
         tools=[find_listings, get_listing_detail],
-        system_prompt=AGENT_PROMPT,
+        system_prompt=_build_system_prompt(),
         checkpointer=checkpointer,
     )
 
