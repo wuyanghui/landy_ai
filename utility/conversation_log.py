@@ -89,3 +89,111 @@ def log_turn(
             conn.commit()
     except Exception as exc:  # logging must never break a chat turn
         logger.error(f"[conversation_log] write failed: {exc}")
+
+
+# ── analytics reads (admin dashboard) ─────────────────────────────────────────
+
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else v
+
+
+def get_stats() -> dict:
+    """Aggregate metrics for the admin dashboard."""
+    empty = {
+        "total_turns": 0, "total_conversations": 0, "total_sessions": 0,
+        "avg_turns_per_conversation": 0, "zero_result_turns": 0, "cta_turns": 0,
+        "by_day": [],
+    }
+    if not _DB_URI:
+        return empty
+    try:
+        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
+            _ensure_table(conn)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT count(*),
+                           count(DISTINCT thread_id),
+                           count(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL),
+                           count(*) FILTER (WHERE result_count = 0),
+                           count(*) FILTER (WHERE cta_fired)
+                    FROM conversation_turns
+                """)
+                turns, convos, sessions, zero, cta = cur.fetchone()
+                cur.execute("""
+                    SELECT date_trunc('day', created_at)::date AS d, count(*)
+                    FROM conversation_turns
+                    WHERE created_at > now() - interval '14 days'
+                    GROUP BY d ORDER BY d
+                """)
+                by_day = [{"day": str(d), "turns": c} for d, c in cur.fetchall()]
+        return {
+            "total_turns": turns or 0,
+            "total_conversations": convos or 0,
+            "total_sessions": sessions or 0,
+            "avg_turns_per_conversation": round((turns or 0) / convos, 1) if convos else 0,
+            "zero_result_turns": zero or 0,
+            "cta_turns": cta or 0,
+            "by_day": by_day,
+        }
+    except Exception as exc:
+        logger.error(f"[conversation_log] stats failed: {exc}")
+        return empty
+
+
+def get_conversations(limit: int = 50, offset: int = 0) -> list:
+    """One row per conversation (thread), newest first."""
+    if not _DB_URI:
+        return []
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    try:
+        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
+            _ensure_table(conn)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT thread_id,
+                           max(session_id)            AS session_id,
+                           min(created_at)            AS started_at,
+                           max(created_at)            AS last_at,
+                           count(*)                   AS turn_count,
+                           bool_or(cta_fired)         AS any_cta,
+                           (array_agg(user_message ORDER BY created_at))[1] AS first_message
+                    FROM conversation_turns
+                    GROUP BY thread_id
+                    ORDER BY started_at DESC
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
+                rows = cur.fetchall()
+        return [{
+            "thread_id": r[0], "session_id": r[1],
+            "started_at": _iso(r[2]), "last_at": _iso(r[3]),
+            "turn_count": r[4], "cta_fired": r[5], "first_message": r[6],
+        } for r in rows]
+    except Exception as exc:
+        logger.error(f"[conversation_log] list failed: {exc}")
+        return []
+
+
+def get_conversation(thread_id: str) -> list:
+    """All turns for one conversation, oldest first."""
+    if not _DB_URI or not thread_id:
+        return []
+    try:
+        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
+            _ensure_table(conn)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT created_at, user_message, answer, result_count,
+                           cta_fired, cta_trigger, filters
+                    FROM conversation_turns
+                    WHERE thread_id = %s
+                    ORDER BY created_at
+                """, (thread_id,))
+                rows = cur.fetchall()
+        return [{
+            "created_at": _iso(r[0]), "user_message": r[1], "answer": r[2],
+            "result_count": r[3], "cta_fired": r[4], "cta_trigger": r[5], "filters": r[6],
+        } for r in rows]
+    except Exception as exc:
+        logger.error(f"[conversation_log] get failed: {exc}")
+        return []

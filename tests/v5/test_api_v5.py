@@ -273,3 +273,37 @@ def test_secret_gate_disabled_when_unset(monkeypatch):
     # empty message still 400 (validation), not 401 — gate is off
     resp = client.post("/api/v5/invoke", json={"message": ""})
     assert resp.status_code == 400
+
+
+# ── admin analytics endpoints ─────────────────────────────────────────────────
+
+def test_admin_stats_endpoint():
+    from src.index import app
+    fake = {"total_turns": 10, "total_conversations": 4, "avg_turns_per_conversation": 2.5,
+            "total_sessions": 3, "zero_result_turns": 1, "cta_turns": 2, "by_day": []}
+    with patch("utility.conversation_log.get_stats", return_value=fake):
+        client = TestClient(app)
+        resp = client.get("/api/v5/admin/stats")
+    assert resp.status_code == 200
+    assert resp.json()["total_conversations"] == 4
+    assert resp.json()["avg_turns_per_conversation"] == 2.5
+
+
+def test_admin_conversations_endpoint():
+    from src.index import app
+    fake = [{"thread_id": "t1", "turn_count": 3, "cta_fired": True, "first_message": "warehouse"}]
+    with patch("utility.conversation_log.get_conversations", return_value=fake):
+        client = TestClient(app)
+        resp = client.get("/api/v5/admin/conversations?limit=10")
+    assert resp.status_code == 200
+    assert resp.json()[0]["thread_id"] == "t1"
+
+
+def test_admin_conversation_detail_endpoint():
+    from src.index import app
+    fake = [{"user_message": "hi", "answer": "hello", "result_count": 0}]
+    with patch("utility.conversation_log.get_conversation", return_value=fake):
+        client = TestClient(app)
+        resp = client.get("/api/v5/admin/conversation?thread_id=t1")
+    assert resp.status_code == 200
+    assert resp.json()[0]["user_message"] == "hi"

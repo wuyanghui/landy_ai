@@ -896,3 +896,28 @@ async def stream_v5(request: V5ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ─────────────────────────────────────────
+# Admin analytics over conversation_turns (gated by the shared secret;
+# the frontend additionally validates the admin session before proxying here)
+# ─────────────────────────────────────────
+@app.get("/api/v5/admin/stats")
+async def v5_admin_stats():
+    import asyncio as _asyncio
+    from utility.conversation_log import get_stats
+    return await _asyncio.to_thread(get_stats)
+
+
+@app.get("/api/v5/admin/conversations")
+async def v5_admin_conversations(limit: int = 50, offset: int = 0):
+    import asyncio as _asyncio
+    from utility.conversation_log import get_conversations
+    return await _asyncio.to_thread(get_conversations, limit, offset)
+
+
+@app.get("/api/v5/admin/conversation")
+async def v5_admin_conversation(thread_id: str):
+    import asyncio as _asyncio
+    from utility.conversation_log import get_conversation
+    return await _asyncio.to_thread(get_conversation, thread_id)
