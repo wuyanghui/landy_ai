@@ -168,6 +168,44 @@ def test_v5_stream_emits_reasoning_frames_separately():
     assert tokens == ["Here are"]  # reasoning never leaks into answer tokens
 
 
+def test_v5_stream_logs_conversation_turn():
+    from langchain_core.messages import AIMessageChunk
+
+    async def fake_astream(*a, **kw):
+        yield {"type": "custom", "ns": (), "data": {"event": "search_start", "filters": {"region": "Selangor"}}}
+        yield {"type": "messages", "ns": (), "data": (AIMessageChunk(content="Here are 3."), {})}
+        yield {"type": "custom", "ns": (), "data": {"event": "search_complete", "total_found": 3}}
+
+    agent = MagicMock()
+    agent.astream = fake_astream
+    captured = {}
+
+    def fake_log(**kw):
+        captured.update(kw)
+
+    with patch("src.index.AsyncPostgresSaver.from_conn_string", side_effect=_fake_postgres):
+        with patch("agent.v5.orchestration.create_agent", return_value=agent):
+            with patch("agent.v5.orchestration.extract_v5_state",
+                       new=AsyncMock(return_value=_fake_state(live_agent_cta=True, live_agent_trigger="investment"))):
+                with patch("utility.conversation_log.log_turn", side_effect=fake_log):
+                    from src.index import app
+                    client = TestClient(app)
+                    resp = client.post(
+                        "/api/v5/stream",
+                        json={"message": "warehouse in Selangor", "thread_id": "t-1", "session_id": "sess-9"},
+                    )
+
+    assert resp.status_code == 200
+    assert captured["session_id"] == "sess-9"
+    assert captured["thread_id"] == "t-1"
+    assert captured["user_message"] == "warehouse in Selangor"
+    assert captured["filters"] == {"region": "Selangor"}
+    assert captured["result_count"] == 3
+    assert captured["answer"] == "Here are 3."
+    assert captured["cta_fired"] is True
+    assert captured["cta_trigger"] == "investment"
+
+
 def test_v5_stream_emits_extracted_chips_and_cta():
     async def fake_astream(*a, **kw):
         yield {"type": "messages", "ns": (), "data": ()}

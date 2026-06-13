@@ -699,6 +699,7 @@ def _v5_final_answer(messages: list) -> str:
 class V5ChatRequest(BaseModel):
     message: str
     thread_id: Optional[str] = None
+    session_id: Optional[str] = None  # stable per browser; for the conversation log
 
 
 @app.post("/api/v5/invoke")
@@ -763,12 +764,16 @@ async def stream_v5(request: V5ChatRequest):
     logger.info(f"[v5/stream] thread={thread_id}")
 
     from agent.v5.orchestration import create_agent as _create_v5_agent, extract_v5_state
+    from utility.conversation_log import log_turn
 
     def _build_v5_sse_line(payload: dict) -> str:
         # updates/messages payloads contain LangChain message objects
         return f"data: {json.dumps(payload, default=str)}\n\n"
 
     async def _event_generator():
+        # captured from the tool's SSE events for the conversation log
+        log_filters = None
+        log_result_count = None
         try:
             # announce the thread id first so clients can persist it for multi-turn
             yield _build_v5_sse_line({
@@ -809,6 +814,14 @@ async def stream_v5(request: V5ChatRequest):
                     # updates frames are internal state dumps and dwarf the payload
                     if type_ not in ("messages", "custom"):
                         continue
+
+                    # capture search filters/result count for the conversation log
+                    # (last search of the turn wins on refinement)
+                    if type_ == "custom" and isinstance(data, dict):
+                        if data.get("event") == "search_start" and data.get("filters") is not None:
+                            log_filters = data["filters"]
+                        elif data.get("event") == "search_complete":
+                            log_result_count = data.get("total_found")
 
                     if type_ == "messages" and isinstance(data, tuple) and data:
                         msg = data[0]
@@ -853,6 +866,23 @@ async def stream_v5(request: V5ChatRequest):
                             "type": "custom", "ns": [],
                             "data": {"event": "live_agent_cta", "trigger": structured.live_agent_trigger},
                         })
+
+                # Dual-write the clean conversation record (best-effort; never
+                # blocks the stream the user already received). Runs after the
+                # final yield so it adds no user-visible latency.
+                import asyncio as _asyncio
+                await _asyncio.to_thread(
+                    log_turn,
+                    session_id=request.session_id,
+                    thread_id=thread_id,
+                    agent_version="v5",
+                    user_message=request.message,
+                    filters=log_filters,
+                    result_count=log_result_count,
+                    answer="".join(answer_parts),
+                    cta_fired=bool(structured and structured.live_agent_cta),
+                    cta_trigger=(structured.live_agent_trigger if structured else None),
+                )
 
         except Exception as e:
             logger.error(f"[v5/stream] error: {e}\n{traceback.format_exc()}")

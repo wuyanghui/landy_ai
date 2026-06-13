@@ -6,3 +6,5 @@ test.py
 
 # Ignore Python cache directories
 __pycache__/
+# local conversation exports (contain user data)
+conversations_export*.jsonl
