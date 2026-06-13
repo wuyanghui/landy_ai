@@ -211,13 +211,16 @@ def test_chat_listing_status_flags():
     doc = _chat_doc()
     doc["is_featured"] = True
     doc["is_exclusive"] = True
+    doc["is_fresh"] = True
     c = serialize_chat_listing(doc)
     assert c["featured"] is True
     assert c["is_exclusive"] is True
+    assert c["is_new"] is True
     # default off when absent
     d = serialize_chat_listing(_make_doc())
     assert d["featured"] is False
     assert d["is_exclusive"] is False
+    assert d["is_new"] is False
 
 
 def test_chat_listing_missing_optionals_graceful():
