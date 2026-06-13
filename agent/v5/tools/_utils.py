@@ -90,6 +90,7 @@ def serialize_chat_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
         "title": doc.get("title", ""),
         "price": offer.get("price"),
         "currency": offer.get("currency"),
+        "price_per_sqft": doc.get("price_per_sqft"),
         "type": offer.get("offer_type"),
         "category_type": list(dict.fromkeys(
             ([doc["main_category"]] if doc.get("main_category") else [])

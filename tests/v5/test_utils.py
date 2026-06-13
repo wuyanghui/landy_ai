@@ -202,6 +202,11 @@ def test_chat_listing_images_passthrough():
     assert c["images"][0]["is_primary"] is True
 
 
+def test_chat_listing_price_per_sqft():
+    c = serialize_chat_listing(_chat_doc())
+    assert c["price_per_sqft"] == 150.0
+
+
 def test_chat_listing_missing_optionals_graceful():
     doc = _chat_doc()
     doc["location"]["geo"] = None
