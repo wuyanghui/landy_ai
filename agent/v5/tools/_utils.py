@@ -110,6 +110,7 @@ def serialize_chat_listing(doc: Dict[str, Any]) -> Dict[str, Any]:
         },
         "images": doc.get("images") or [],
         "featured": bool(doc.get("is_featured", False)),
+        "is_exclusive": bool(doc.get("is_exclusive", False)),
         "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
     }
 
