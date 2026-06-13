@@ -1,50 +1,47 @@
-"""Clean, queryable conversation log — dual-written alongside the LangGraph
-checkpointer. The checkpointer owns agent memory (serialized state); this owns
-the analytics/lead record (normal columns we control).
+"""Conversation log — stored in MongoDB alongside the other business data
+(leads, listings), one document per conversation (thread) with a `turns` array.
 
-Lives in the same Postgres as the checkpointer (DB_URI). Best-effort: a logging
-failure must never break a chat turn — callers should still wrap, and every
-write here swallows its own errors.
+Document shape (collection: landy_conversations, _id = thread_id):
+    {
+        _id: <thread_id>, session_id, agent_version,
+        started_at, last_at, cta_fired (set true once any turn fires),
+        turns: [{ at, user_message, answer, filters, result_count, cta_fired, cta_trigger }]
+    }
+
+This is the queryable lead/analytics record and the easy export surface
+(`find()` / mongoexport gives whole conversations). The LangGraph Postgres
+checkpointer still owns agent memory separately. All functions are best-effort:
+a logging failure must never break a chat turn.
 """
-import os
-import json
 import logging
+from datetime import datetime, timezone, timedelta
 
-import psycopg
+from utility.property_listing_init import _ensure_client
 
 logger = logging.getLogger(__name__)
 
-_DB_URI = os.environ.get("DB_URI")
-_table_ready = False
-
-_CREATE_SQL = """
-CREATE TABLE IF NOT EXISTS conversation_turns (
-    id            BIGSERIAL PRIMARY KEY,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    session_id    TEXT,
-    thread_id     TEXT,
-    agent_version TEXT,
-    user_message  TEXT,
-    filters       JSONB,
-    result_count  INTEGER,
-    answer        TEXT,
-    cta_fired     BOOLEAN,
-    cta_trigger   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_conv_turns_created ON conversation_turns (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_conv_turns_session ON conversation_turns (session_id);
-CREATE INDEX IF NOT EXISTS idx_conv_turns_zero ON conversation_turns (result_count) WHERE result_count = 0;
-"""
+_COLLECTION = "landy_conversations"
+_indexed = False
 
 
-def _ensure_table(conn) -> None:
-    global _table_ready
-    if _table_ready:
+def _collection():
+    return _ensure_client()["property"][_COLLECTION]
+
+
+def _ensure_indexes(col) -> None:
+    global _indexed
+    if _indexed:
         return
-    with conn.cursor() as cur:
-        cur.execute(_CREATE_SQL)
-    conn.commit()
-    _table_ready = True
+    try:
+        col.create_index("started_at")
+        col.create_index("session_id")
+        _indexed = True
+    except Exception:  # index creation is best-effort
+        pass
+
+
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else v
 
 
 def log_turn(
@@ -59,80 +56,99 @@ def log_turn(
     cta_fired=False,
     cta_trigger=None,
 ) -> None:
-    """Insert one completed chat turn. Synchronous — call via asyncio.to_thread.
-    Never raises; logs and returns on any failure."""
-    if not _DB_URI:
+    """Append one completed turn to its conversation document (upsert).
+    Synchronous — call via asyncio.to_thread. Never raises."""
+    if not thread_id:
         return
     try:
-        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
-            _ensure_table(conn)
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO conversation_turns
-                        (session_id, thread_id, agent_version, user_message,
-                         filters, result_count, answer, cta_fired, cta_trigger)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)
-                    """,
-                    (
-                        session_id,
-                        thread_id,
-                        agent_version,
-                        user_message,
-                        json.dumps(filters) if filters is not None else None,
-                        result_count,
-                        answer,
-                        cta_fired,
-                        cta_trigger,
-                    ),
-                )
-            conn.commit()
+        col = _collection()
+        _ensure_indexes(col)
+        now = datetime.now(timezone.utc)
+        turn = {
+            "at": now,
+            "user_message": user_message,
+            "answer": answer,
+            "filters": filters,
+            "result_count": result_count,
+            "cta_fired": bool(cta_fired),
+            "cta_trigger": cta_trigger,
+        }
+        set_fields = {"last_at": now}
+        if session_id:
+            set_fields["session_id"] = session_id
+        if cta_fired:
+            set_fields["cta_fired"] = True  # sticky once any turn fires
+        col.update_one(
+            {"_id": thread_id},
+            {
+                "$setOnInsert": {"agent_version": agent_version, "started_at": now},
+                "$set": set_fields,
+                "$push": {"turns": turn},
+            },
+            upsert=True,
+        )
     except Exception as exc:  # logging must never break a chat turn
         logger.error(f"[conversation_log] write failed: {exc}")
 
 
 # ── analytics reads (admin dashboard) ─────────────────────────────────────────
 
-def _iso(v):
-    return v.isoformat() if hasattr(v, "isoformat") else v
-
-
 def get_stats() -> dict:
-    """Aggregate metrics for the admin dashboard."""
     empty = {
         "total_turns": 0, "total_conversations": 0, "total_sessions": 0,
         "avg_turns_per_conversation": 0, "zero_result_turns": 0, "cta_turns": 0,
         "by_day": [],
     }
-    if not _DB_URI:
-        return empty
     try:
-        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
-            _ensure_table(conn)
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT count(*),
-                           count(DISTINCT thread_id),
-                           count(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL),
-                           count(*) FILTER (WHERE result_count = 0),
-                           count(*) FILTER (WHERE cta_fired)
-                    FROM conversation_turns
-                """)
-                turns, convos, sessions, zero, cta = cur.fetchone()
-                cur.execute("""
-                    SELECT date_trunc('day', created_at)::date AS d, count(*)
-                    FROM conversation_turns
-                    WHERE created_at > now() - interval '14 days'
-                    GROUP BY d ORDER BY d
-                """)
-                by_day = [{"day": str(d), "turns": c} for d, c in cur.fetchall()]
+        col = _collection()
+        total_conversations = col.count_documents({})
+
+        totals = list(col.aggregate([
+            {"$project": {
+                "n": {"$size": {"$ifNull": ["$turns", []]}},
+                "session_id": 1,
+            }},
+            {"$group": {
+                "_id": None,
+                "total_turns": {"$sum": "$n"},
+                "sessions": {"$addToSet": "$session_id"},
+            }},
+        ]))
+        total_turns = totals[0]["total_turns"] if totals else 0
+        total_sessions = len([s for s in (totals[0]["sessions"] if totals else []) if s])
+
+        per_turn = list(col.aggregate([
+            {"$unwind": "$turns"},
+            {"$group": {
+                "_id": None,
+                "zero": {"$sum": {"$cond": [{"$eq": ["$turns.result_count", 0]}, 1, 0]}},
+                "cta": {"$sum": {"$cond": ["$turns.cta_fired", 1, 0]}},
+            }},
+        ]))
+        zero = per_turn[0]["zero"] if per_turn else 0
+        cta = per_turn[0]["cta"] if per_turn else 0
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+        by_day = [
+            {"day": r["_id"], "turns": r["turns"]}
+            for r in col.aggregate([
+                {"$unwind": "$turns"},
+                {"$match": {"turns.at": {"$gte": cutoff}}},
+                {"$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$turns.at"}},
+                    "turns": {"$sum": 1},
+                }},
+                {"$sort": {"_id": 1}},
+            ])
+        ]
+
         return {
-            "total_turns": turns or 0,
-            "total_conversations": convos or 0,
-            "total_sessions": sessions or 0,
-            "avg_turns_per_conversation": round((turns or 0) / convos, 1) if convos else 0,
-            "zero_result_turns": zero or 0,
-            "cta_turns": cta or 0,
+            "total_turns": total_turns,
+            "total_conversations": total_conversations,
+            "total_sessions": total_sessions,
+            "avg_turns_per_conversation": round(total_turns / total_conversations, 1) if total_conversations else 0,
+            "zero_result_turns": zero,
+            "cta_turns": cta,
             "by_day": by_day,
         }
     except Exception as exc:
@@ -141,33 +157,29 @@ def get_stats() -> dict:
 
 
 def get_conversations(limit: int = 50, offset: int = 0) -> list:
-    """One row per conversation (thread), newest first."""
-    if not _DB_URI:
-        return []
     limit = max(1, min(int(limit), 200))
     offset = max(0, int(offset))
     try:
-        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
-            _ensure_table(conn)
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT thread_id,
-                           max(session_id)            AS session_id,
-                           min(created_at)            AS started_at,
-                           max(created_at)            AS last_at,
-                           count(*)                   AS turn_count,
-                           bool_or(cta_fired)         AS any_cta,
-                           (array_agg(user_message ORDER BY created_at))[1] AS first_message
-                    FROM conversation_turns
-                    GROUP BY thread_id
-                    ORDER BY started_at DESC
-                    LIMIT %s OFFSET %s
-                """, (limit, offset))
-                rows = cur.fetchall()
+        col = _collection()
+        rows = col.aggregate([
+            {"$sort": {"started_at": -1}},
+            {"$skip": offset},
+            {"$limit": limit},
+            {"$project": {
+                "_id": 0,
+                "thread_id": "$_id",
+                "session_id": 1,
+                "started_at": 1,
+                "last_at": 1,
+                "turn_count": {"$size": {"$ifNull": ["$turns", []]}},
+                "cta_fired": {"$ifNull": ["$cta_fired", False]},
+                "first_message": {"$arrayElemAt": ["$turns.user_message", 0]},
+            }},
+        ])
         return [{
-            "thread_id": r[0], "session_id": r[1],
-            "started_at": _iso(r[2]), "last_at": _iso(r[3]),
-            "turn_count": r[4], "cta_fired": r[5], "first_message": r[6],
+            **r,
+            "started_at": _iso(r.get("started_at")),
+            "last_at": _iso(r.get("last_at")),
         } for r in rows]
     except Exception as exc:
         logger.error(f"[conversation_log] list failed: {exc}")
@@ -175,25 +187,21 @@ def get_conversations(limit: int = 50, offset: int = 0) -> list:
 
 
 def get_conversation(thread_id: str) -> list:
-    """All turns for one conversation, oldest first."""
-    if not _DB_URI or not thread_id:
+    if not thread_id:
         return []
     try:
-        with psycopg.connect(_DB_URI, connect_timeout=10) as conn:
-            _ensure_table(conn)
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT created_at, user_message, answer, result_count,
-                           cta_fired, cta_trigger, filters
-                    FROM conversation_turns
-                    WHERE thread_id = %s
-                    ORDER BY created_at
-                """, (thread_id,))
-                rows = cur.fetchall()
+        doc = _collection().find_one({"_id": thread_id})
+        if not doc:
+            return []
         return [{
-            "created_at": _iso(r[0]), "user_message": r[1], "answer": r[2],
-            "result_count": r[3], "cta_fired": r[4], "cta_trigger": r[5], "filters": r[6],
-        } for r in rows]
+            "created_at": _iso(t.get("at")),
+            "user_message": t.get("user_message"),
+            "answer": t.get("answer"),
+            "result_count": t.get("result_count"),
+            "cta_fired": t.get("cta_fired", False),
+            "cta_trigger": t.get("cta_trigger"),
+            "filters": t.get("filters"),
+        } for t in (doc.get("turns") or [])]
     except Exception as exc:
         logger.error(f"[conversation_log] get failed: {exc}")
         return []

@@ -899,8 +899,8 @@ async def stream_v5(request: V5ChatRequest):
 
 
 # ─────────────────────────────────────────
-# Admin analytics over conversation_turns (gated by the shared secret;
-# the frontend additionally validates the admin session before proxying here)
+# Admin analytics over the landy_conversations MongoDB collection (gated by the
+# shared secret; the frontend additionally validates the admin session first)
 # ─────────────────────────────────────────
 @app.get("/api/v5/admin/stats")
 async def v5_admin_stats():
