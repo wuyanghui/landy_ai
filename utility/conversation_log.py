@@ -101,9 +101,13 @@ def get_stats() -> dict:
     }
     try:
         col = _collection()
-        total_conversations = col.count_documents({})
+        # metrics cover live v5 data only — legacy imports are browsable but
+        # excluded so they don't skew averages/rates
+        live = {"legacy": {"$ne": True}}
+        total_conversations = col.count_documents(live)
 
         totals = list(col.aggregate([
+            {"$match": live},
             {"$project": {
                 "n": {"$size": {"$ifNull": ["$turns", []]}},
                 "session_id": 1,
@@ -118,6 +122,7 @@ def get_stats() -> dict:
         total_sessions = len([s for s in (totals[0]["sessions"] if totals else []) if s])
 
         per_turn = list(col.aggregate([
+            {"$match": live},
             {"$unwind": "$turns"},
             {"$group": {
                 "_id": None,
@@ -132,6 +137,7 @@ def get_stats() -> dict:
         by_day = [
             {"day": r["_id"], "turns": r["turns"]}
             for r in col.aggregate([
+                {"$match": live},
                 {"$unwind": "$turns"},
                 {"$match": {"turns.at": {"$gte": cutoff}}},
                 {"$group": {
@@ -173,6 +179,7 @@ def get_conversations(limit: int = 50, offset: int = 0) -> list:
                 "last_at": 1,
                 "turn_count": {"$size": {"$ifNull": ["$turns", []]}},
                 "cta_fired": {"$ifNull": ["$cta_fired", False]},
+                "legacy": {"$ifNull": ["$legacy", False]},
                 "first_message": {"$arrayElemAt": ["$turns.user_message", 0]},
             }},
         ])
