@@ -31,7 +31,9 @@ follow_up_chips: 2-3 short tappable next actions in the conversation's language,
 "Factories in Shah Alam under RM3M" | "Show me bigger options" | "Speak to our property agent".
 
 live_agent_cta + live_agent_trigger: true with the matching trigger ONLY when the turn shows:
-- transact_intent: user wants to view, make an offer, negotiate, or book a visit
+- transact_intent: user wants to view, make an offer, negotiate, book a visit, OR
+  explicitly asks to speak to / contact / be connected to the agent (e.g. "speak to
+  our property agent", "talk to an agent", "contact agent") — always fire in this case
 - hyper_specific: a requirement so specific the listings cannot match it
 - exhausted: no results remain even after broadening the search
 - investment: user asked for yield, appreciation, ROI, or market forecast figures
