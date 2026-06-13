@@ -101,7 +101,7 @@ Returns at most 20 listings (total_found shows the real count — use it for the
 overflow link). Never try to retrieve more than the tool returns; refine filters instead.
 - offer_type: only set if user specified buy or rent
 - property_category: list of categories. "factory" auto-expands to all factory subtypes.
-- locality: city/district name. Expand abbreviations: "PJ"→"Petaling Jaya", "KL"→"Kuala Lumpur", "CS Lin"→"Chan Sow Lin"
+- locality: city / district / suburb / industrial-park name (e.g. "Klang", "Petaling", "Sepang" are districts). Expand abbreviations: "PJ"→"Petaling Jaya", "KL"→"Kuala Lumpur", "CS Lin"→"Chan Sow Lin"
 - region: state name. "Selangor", "Kuala Lumpur", "Negeri Sembilan"
 - max_highway_km: "near highway"→5.0, "expressway access"→5.0
 - max_port_km: "near port" / "near Port Klang"→30.0

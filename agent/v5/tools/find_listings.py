@@ -9,18 +9,25 @@ from agent.v5.tools._utils import expand_property_category, serialize_chat_listi
 from utility.property_listing_init import get_enriched_property_listing_collections
 
 
+# A locality can be a city, district, industrial park, or suburb — all are in
+# the hierarchy and a user might name any of them (e.g. "Klang" is a district,
+# not a city). district.name is the most consistently populated field, so
+# ignoring it silently dropped district-level searches.
+_LOCALITY_NODES = ("city", "district", "industrial_park", "suburb")
+
+
 def _build_location_clause(locality: str) -> Dict:
     rx = {"$regex": re.escape(locality), "$options": "i"}
     slug = locality.lower().replace(" ", "-")
     lower = locality.lower()
-    return {"$or": [
-        {"location.hierarchy.city.name": rx},
-        {"location.hierarchy.city.aliases": lower},
-        {"location.hierarchy.city.slug": slug},
-        {"location.hierarchy.industrial_park.name": rx},
-        {"location.hierarchy.industrial_park.aliases": lower},
-        {"location.hierarchy.industrial_park.slug": slug},
-    ]}
+    ors = []
+    for node in _LOCALITY_NODES:
+        base = f"location.hierarchy.{node}"
+        ors.append({f"{base}.name": rx})
+        ors.append({f"{base}.name_local": rx})
+        ors.append({f"{base}.aliases": lower})
+        ors.append({f"{base}.slug": slug})
+    return {"$or": ors}
 
 
 def _build_region_clause(region: str) -> Dict:
@@ -28,6 +35,7 @@ def _build_region_clause(region: str) -> Dict:
     lower = region.lower()
     return {"$or": [
         {"location.hierarchy.state.name": rx},
+        {"location.hierarchy.state.name_local": rx},
         {"location.hierarchy.state.aliases": lower},
     ]}
 
@@ -153,8 +161,9 @@ async def find_listings(
     """
     Find active industrial property listings using structured filters.
 
-    locality: City or district name. Expand abbreviations before calling:
-              "PJ" → "Petaling Jaya" | "KL" → "Kuala Lumpur" | "CS Lin" → "Chan Sow Lin"
+    locality: City, district, suburb, or industrial-park name (e.g. "Klang" and
+              "Petaling" are districts; "Shah Alam" a city). Expand abbreviations
+              before calling: "PJ" → "Petaling Jaya" | "KL" → "Kuala Lumpur" | "CS Lin" → "Chan Sow Lin"
     region: State name. Examples: "Selangor", "Kuala Lumpur", "Negeri Sembilan".
     max_highway_km: Use when user says "near highway" or "expressway access". Default 5.0.
     max_port_km: Use when user says "near port" or "near Port Klang". Default 30.0.
