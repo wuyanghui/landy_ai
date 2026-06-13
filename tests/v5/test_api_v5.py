@@ -188,3 +188,50 @@ def test_v5_stream_rejects_empty_message():
     client = TestClient(app)
     resp = client.post("/api/v5/stream", json={"message": ""})
     assert resp.status_code == 400
+
+
+# ── shared-secret gate ────────────────────────────────────────────────────────
+
+def test_secret_gate_blocks_without_header(monkeypatch):
+    import src.index as idx
+    monkeypatch.setattr(idx, "_API_SECRET", "topsecret")
+    client = TestClient(idx.app)
+    resp = client.post("/api/v5/invoke", json={"message": "factory"})
+    assert resp.status_code == 401
+
+
+def test_secret_gate_allows_with_correct_header(monkeypatch):
+    import src.index as idx
+    monkeypatch.setattr(idx, "_API_SECRET", "topsecret")
+
+    agent = MagicMock()
+    agent.ainvoke = AsyncMock(return_value={
+        "messages": [AIMessage(content="Here you go.")]
+    })
+
+    with patch("src.index.AsyncPostgresSaver.from_conn_string", side_effect=_fake_postgres):
+        with patch("agent.v5.orchestration.create_agent", return_value=agent):
+            with patch("agent.v5.orchestration.extract_v5_state", new=AsyncMock(return_value=_fake_state())):
+                client = TestClient(idx.app)
+                resp = client.post(
+                    "/api/v5/invoke",
+                    json={"message": "factory"},
+                    headers={"x-landy-key": "topsecret"},
+                )
+    assert resp.status_code == 200
+
+
+def test_secret_gate_exempts_health(monkeypatch):
+    import src.index as idx
+    monkeypatch.setattr(idx, "_API_SECRET", "topsecret")
+    client = TestClient(idx.app)
+    assert client.get("/health").status_code == 200
+
+
+def test_secret_gate_disabled_when_unset(monkeypatch):
+    import src.index as idx
+    monkeypatch.setattr(idx, "_API_SECRET", None)
+    client = TestClient(idx.app)
+    # empty message still 400 (validation), not 401 — gate is off
+    resp = client.post("/api/v5/invoke", json={"message": ""})
+    assert resp.status_code == 400

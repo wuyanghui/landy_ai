@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from agent.v1.orchestrator import graph
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from typing import Optional, List, Dict, Any, TypedDict
 import json
@@ -26,12 +26,32 @@ class InvokeRequest(BaseModel):
     user_input: str
     state_id: Optional[str] = None
 
+
+# Shared-secret gate. The frontend proxies (server-to-server) attach
+# x-landy-key; browsers never see it. Enforced only when LANDY_API_SECRET is
+# configured, so the code can deploy before the secret is set in both projects
+# without breaking. Runs as a dependency (not middleware) so it never buffers
+# the SSE stream. /health is exempt for uptime checks.
+_API_SECRET = os.environ.get("LANDY_API_SECRET")
+_OPEN_PATHS = {"/health"}
+
+
+def require_api_secret(request: Request, x_landy_key: Optional[str] = Header(default=None)):
+    if not _API_SECRET:
+        return  # not configured yet — allow (rollout grace)
+    if request.url.path in _OPEN_PATHS:
+        return
+    if x_landy_key != _API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 app = FastAPI(
     title="Property Search Agent API",
     description="Property Search Agent API",
     version="2.0.0",
     docs_url="/api/docs",
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    dependencies=[Depends(require_api_secret)],
     )
 
 DB_URI = os.environ.get("DB_URI")
