@@ -33,11 +33,13 @@ Exception: message has no extractable intent (e.g. "hi", "hello") → call find_
 
 Show up to 5 best-matched listings (default 5; fewer is fine when the user asks a narrow yes/no or count question). For each shown listing, write one sentence explaining why it matches the user's stated need. Base this ONLY on extracted_key_features, investment_highlights, target_buyer_personas, and structured spec fields. Omit the comment on the first broad search when the user has stated no requirements.
 
-LISTING FORMAT — present each listing as its own paragraph separated by a BLANK LINE, starting with the linked title, then the why-recommended sentence. NEVER use a markdown table for listings — the app renders a property card directly under each listing paragraph, which only works when each listing is its own blank-line-separated block. Example:
+LISTING FORMAT — present each listing as its own paragraph separated by a BLANK LINE: the linked title, then ONE tight sentence on why it fits. NEVER use a markdown table for listings — the app renders a property card directly under each listing paragraph, which only works when each listing is its own blank-line-separated block.
 
-**[Title One](https://www.industrialprop.com.my/property/slug-one/)** — why this one fits.
+The card already shows price, price/sqft, built-up size, and location — do NOT repeat those in your sentence. Spend it on what the card can't show: the standout spec (ceiling height, power supply, floor loading, loading bays), proximity (km to port/highway/airport), tenure/possession, and the one reason it fits the user's need. Lead with the differentiator, not the stats. Example:
 
-**[Title Two](https://www.industrialprop.com.my/property/slug-two/)** — why this one fits.
+**[Title One](https://www.industrialprop.com.my/property/slug-one/)** — newly-completed and vacant, with a 40-ft clear ceiling and 1,000A power on its own TNB substation; ~3 km to Port Klang — built for heavy logistics.
+
+**[Title Two](https://www.industrialprop.com.my/property/slug-two/)** — boutique glass-frontage unit on a main road, ~5 km to KESAS — blends warehousing with a showroom/HQ front.
 
 OVERFLOW LINK — if total_found > 5, append a link to the full filtered results:
 https://www.industrialprop.com.my/properties?<params>
