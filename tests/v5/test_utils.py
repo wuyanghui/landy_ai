@@ -70,22 +70,43 @@ def _make_doc(**overrides):
 # ── category expansion ────────────────────────────────────────────────────────
 
 def test_factory_expands():
-    result = expand_property_category(["factory"])
-    assert set(result) == {"factory", "cluster-factory", "detached-factory", "semi-d-factory", "terrace-factory"}
+    # Order is part of the contract: filters_applied → overflow-link category= must
+    # be reproducible across identical searches, so the expansion is order-stable.
+    assert expand_property_category(["factory"]) == [
+        "factory", "cluster-factory", "detached-factory", "semi-d-factory", "terrace-factory",
+    ]
 
 
 def test_warehouse_passthrough():
     assert expand_property_category(["warehouse"]) == ["warehouse"]
 
 
-def test_mixed_expansion():
-    result = expand_property_category(["factory", "warehouse"])
-    assert "warehouse" in result
-    assert "detached-factory" in result
+def test_mixed_expansion_dedups_and_preserves_order():
+    # umbrella + an explicit subtype must not duplicate, and input order is kept
+    assert expand_property_category(["factory", "warehouse"]) == [
+        "factory", "cluster-factory", "detached-factory", "semi-d-factory",
+        "terrace-factory", "warehouse",
+    ]
+    assert expand_property_category(["factory", "detached-factory"]) == [
+        "factory", "cluster-factory", "detached-factory", "semi-d-factory", "terrace-factory",
+    ]
 
 
 def test_empty_list():
     assert expand_property_category([]) == []
+
+
+def test_overflow_link_category_param_reproduces_search():
+    """Regression: Landy reported 27 factories but the overflow link returned 18.
+
+    Root cause was the tool echoing the bare input ("category=factory") into
+    filters_applied; the website's /api/search matches main_category literally and
+    does not expand it. The link must carry the SAME expanded list the tool queried.
+    """
+    param = "category=" + ",".join(expand_property_category(["factory"]))
+    assert param == (
+        "category=factory,cluster-factory,detached-factory,semi-d-factory,terrace-factory"
+    )
 
 
 # ── serialize_listing ─────────────────────────────────────────────────────────
