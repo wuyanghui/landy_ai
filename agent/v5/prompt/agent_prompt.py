@@ -53,8 +53,11 @@ show a different count than total_found.
 - location=<value>  — the param is ALWAYS literally "location"; NEVER write
   "region" or "locality". The value is the city/district if the user named one,
   otherwise the state (e.g. location=Klang or location=Selangor).
-- category=<comma-separated>  — the SAME expanded categories you searched
-  (e.g. category=factory,cluster-factory,detached-factory,semi-d-factory,terrace-factory).
+- category=<comma-separated>  — copy the categories EXACTLY as they appear in the
+  tool's filters_applied; they are already expanded for you (searching "factory"
+  comes back as category=factory,cluster-factory,detached-factory,semi-d-factory,terrace-factory).
+  Use that full list verbatim — NEVER collapse it back to just "factory", which makes
+  the page match only plain factories and under-counts vs total_found.
 - min_price / max_price  — MYR.
 - min_built_size / max_built_size  — built-up sqft.
 - min_land_size / max_land_size  — land sqft.

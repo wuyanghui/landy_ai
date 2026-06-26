@@ -6,12 +6,12 @@ FACTORY_EXPANSION_MAP = {
 
 
 def expand_property_category(categories: List[str]) -> List[str]:
-    expanded: set = set()
+    # Order-preserving + de-duped (dict keeps insertion order). A stable order keeps
+    # the overflow-link `category=` param reproducible across identical searches.
+    expanded: Dict[str, None] = {}
     for cat in categories:
-        if cat in FACTORY_EXPANSION_MAP:
-            expanded.update(FACTORY_EXPANSION_MAP[cat])
-        else:
-            expanded.add(cat)
+        for c in FACTORY_EXPANSION_MAP.get(cat, [cat]):
+            expanded.setdefault(c, None)
     return list(expanded)
 
 

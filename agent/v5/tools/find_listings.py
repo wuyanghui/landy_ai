@@ -252,8 +252,13 @@ async def find_listings(
         return list(dict.fromkeys(r[key] for r in results if r.get(key)))
 
     location_breakdown = _unique("city")
+    # Echo the EXPANDED categories actually queried (e.g. "factory" → every factory
+    # subtype) so the overflow link the agent builds from filters_applied reproduces
+    # total_found. The website's /api/search matches main_category literally and does
+    # NOT expand "factory", so emitting the bare input would under-count the page.
+    expanded_categories = expand_property_category(property_category) if property_category else []
     filters_summary = ", ".join(filter(None, [
-        f"category={','.join(property_category)}" if property_category else None,
+        f"category={','.join(expanded_categories)}" if expanded_categories else None,
         f"locality={locality}" if locality else None,
         f"region={region}" if region else None,
         f"price_max={price_max}" if price_max else None,
