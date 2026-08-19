@@ -45,3 +45,12 @@ def test_path_escape_denied(tmp_path, monkeypatch):
     result = read_wiki_file_module.read_wiki_file.invoke({"path": "../../etc/passwd"})
 
     assert result == "Access denied: path escapes wiki root."
+
+
+def test_directory_path_returns_message(tmp_path, monkeypatch):
+    (tmp_path / "concepts").mkdir()
+    monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
+
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "concepts"})
+
+    assert result == "File not found: concepts"

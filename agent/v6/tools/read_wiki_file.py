@@ -15,6 +15,6 @@ def read_wiki_file(path: str) -> str:
     full_path = (KB_ROOT / path).resolve()
     if not full_path.is_relative_to(KB_ROOT):
         return "Access denied: path escapes wiki root."
-    if not full_path.exists():
+    if not full_path.is_file():
         return f"File not found: {path}"
     return full_path.read_text(encoding="utf-8")
