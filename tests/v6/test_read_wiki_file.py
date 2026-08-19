@@ -47,6 +47,37 @@ def test_path_escape_denied(tmp_path, monkeypatch):
     assert result == "Access denied: path escapes wiki root."
 
 
+def test_leading_slash_escape_denied(tmp_path, monkeypatch):
+    monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
+
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "/../../etc/passwd"})
+
+    assert result == "Access denied: path escapes wiki root."
+
+
+def test_leading_slash_path_resolves(tmp_path, monkeypatch):
+    (tmp_path / "index.md").write_text("# KB Index", encoding="utf-8")
+    monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
+
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "/index.md"})
+
+    assert result == "# KB Index"
+
+
+def test_extensionless_path_appends_md(tmp_path, monkeypatch):
+    (tmp_path / "summaries").mkdir()
+    (tmp_path / "summaries" / "PEQ-Perindustrian.md").write_text(
+        "# PEQ Perindustrian", encoding="utf-8"
+    )
+    monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
+
+    result = read_wiki_file_module.read_wiki_file.invoke(
+        {"path": "summaries/PEQ-Perindustrian"}
+    )
+
+    assert result == "# PEQ Perindustrian"
+
+
 def test_directory_path_returns_message(tmp_path, monkeypatch):
     (tmp_path / "concepts").mkdir()
     monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)

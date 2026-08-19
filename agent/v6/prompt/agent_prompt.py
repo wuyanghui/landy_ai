@@ -15,15 +15,18 @@ concept page doesn't have enough detail.
 
 ## Search strategy
 
-1. Read `index.md` first to see what documents, concepts, and entities exist.
-2. Read the relevant summary page(s) for document-level context.
-3. Read concept or entity pages when the question spans multiple documents or asks about \
-a specific named thing.
+1. Use read_wiki_file to read `index.md` first to see what documents, concepts, and entities exist.
+2. Use read_wiki_file to read the relevant summary page(s) for document-level context.
+3. Use read_wiki_file to read concept or entity pages when the question spans multiple \
+documents or asks about a specific named thing.
 4. Only use get_page_content (raw source pages) when the summary and concept pages don't \
 have the specific detail asked for -- follow the summary's `full_text:` frontmatter field \
 to know which document to pull from, and keep page ranges tight.
 5. Synthesize a clear, concise answer grounded in what you actually read. Cite specific \
 figures (distances, percentages, standards) exactly as written in the source.
+
+Paths are relative to the wiki root (leading slashes and the `.md` extension are both \
+optional for read_wiki_file -- write them however feels natural).
 
 Some source pages are scanned images with no text layer -- if a page's content is just an \
 `![image](...)` reference with no other text, you cannot view it; say the specific detail \

@@ -4,6 +4,10 @@ from langchain_core.tools import tool
 
 from agent.v6.config import KB_ROOT
 
+# Real documents in this KB run 58-106 pages; anything past this is either a
+# mistake or an attempt to force a huge in-memory page-range expansion.
+MAX_PAGES = 200
+
 
 def parse_pages(pages: str) -> list[int]:
     """Parse a page spec like "3-5,7,10-12" into a sorted, deduped list of page numbers."""
@@ -31,7 +35,13 @@ def get_page_content(doc_name: str, pages: str) -> str:
         doc_name: Document name without extension, e.g. "PEQ-alam-sekitar".
         pages: Page spec, e.g. "3-5,7,10-12".
     """
-    target = (KB_ROOT / "sources" / f"{doc_name}.json").resolve()
+    normalized_doc_name = doc_name
+    if normalized_doc_name.startswith("sources/"):
+        normalized_doc_name = normalized_doc_name[len("sources/"):]
+    if normalized_doc_name.endswith(".json"):
+        normalized_doc_name = normalized_doc_name[: -len(".json")]
+
+    target = (KB_ROOT / "sources" / f"{normalized_doc_name}.json").resolve()
     if not target.is_relative_to(KB_ROOT):
         return "Access denied: path escapes wiki root."
     if not target.is_file():
@@ -40,6 +50,9 @@ def get_page_content(doc_name: str, pages: str) -> str:
     try:
         requested = set(parse_pages(pages))
     except ValueError:
+        return f"Invalid page specification: {pages}"
+
+    if len(requested) > MAX_PAGES:
         return f"Invalid page specification: {pages}"
 
     data = json.loads(target.read_text(encoding="utf-8"))

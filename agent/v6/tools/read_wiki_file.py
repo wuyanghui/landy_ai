@@ -12,7 +12,11 @@ def read_wiki_file(path: str) -> str:
         path: File path relative to the wiki root, e.g. "index.md",
             "summaries/PEQ-Perindustrian.md", "concepts/buffer-zone-requirements.md".
     """
-    full_path = (KB_ROOT / path).resolve()
+    normalized = path.lstrip("/\\")
+    if "." not in normalized.rsplit("/", 1)[-1]:
+        normalized = f"{normalized}.md"
+
+    full_path = (KB_ROOT / normalized).resolve()
     if not full_path.is_relative_to(KB_ROOT):
         return "Access denied: path escapes wiki root."
     if not full_path.is_file():

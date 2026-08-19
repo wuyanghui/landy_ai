@@ -87,3 +87,31 @@ def test_malformed_pages_returns_message(tmp_path, monkeypatch):
     )
 
     assert result == "Invalid page specification: abc"
+
+
+def test_sources_prefix_and_json_suffix_normalized(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_page_content_module, "KB_ROOT", tmp_path)
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    doc = [{"page": 1, "content": "Page one text"}]
+    (sources_dir / "test-doc.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "sources/test-doc.json", "pages": "1"}
+    )
+
+    assert "Page one text" in result
+
+
+def test_oversized_page_range_returns_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_page_content_module, "KB_ROOT", tmp_path)
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    doc = [{"page": 1, "content": "Page one text"}]
+    (sources_dir / "test-doc.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "test-doc", "pages": "1-10000"}
+    )
+
+    assert result == "Invalid page specification: 1-10000"
