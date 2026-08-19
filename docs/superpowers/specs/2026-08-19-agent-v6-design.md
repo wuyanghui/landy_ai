@@ -31,7 +31,7 @@ V6 is a separate agent and a separate endpoint, not a tool bolted onto V5. The t
 
 **No follow-up-chip / live-agent-CTA extraction step.** V5's `extract_v5_state` is built around *transaction* intent (view a property, talk to an agent) — that concept doesn't apply to a regulatory question. V6 returns plain answer text. (Follow-up suggestion chips for KB Q&A specifically could be a real future improvement — not building it now; flagging so it isn't mistaken for an oversight.)
 
-**Images are surfaced to the frontend via a custom SSE event, not fed back into the LLM's context.** OpenKB's own `get_image` tool returns image content blocks directly into the model's context (works because it runs through the OpenAI Agents SDK). Whether `deepagents`/LangChain's tool-call plumbing supports returning multimodal content the same way is **unverified** for this stack. Rather than build on that uncertainty, V6's image tool instead emits a `kb_image` custom SSE event (the same pattern `get_listing_detail` already uses for `listing_detail_card`) so the frontend renders the figure directly, and returns a short text acknowledgment to the agent. This is a deliberate deviation from OpenKB's own design, not an oversight — flagged here so it's an explicit decision, not a silent one.
+**No image support.** Verified against the actual generated wiki: `summaries/`, `concepts/`, `entities/`, and `index.md` contain zero image references — every `![image](...)` reference lives only in `wiki/sources/*.json` (the raw per-page PageIndex content `get_page_content` reads as a fallback), and those referenced images total ~5.9GB across 508 files (median ~11MB each, full-resolution PDF page renders). That's not bundleable into a repo/deployment, and since images never appear in the primary summary/concept/entity search path, dropping them costs nothing for typical Q&A — only the rare raw-page-content fallback would ever surface one, and V6 simply doesn't support that case. Revisit as a separately-scoped addition (real object storage, not bundling) if it turns out to matter in practice.
 
 ---
 
@@ -39,12 +39,10 @@ V6 is a separate agent and a separate endpoint, not a tool bolted onto V5. The t
 
 ```
 kb/
-├── wiki/                # synced copy of my-kb/wiki/ (index.md, summaries/, concepts/, entities/, sources/)
-└── images/               # referenced page images only (see below), not the full raw image set
+└── wiki/                # synced copy of my-kb/wiki/ EXCLUDING sources/images/ (index.md, summaries/, concepts/, entities/, sources/*.json)
 ```
 
-- A sync script (`scripts/sync_kb.py`) copies `wiki/` from the OpenKB project path into `landy_ai/kb/wiki/`. Run manually after adding/recompiling a document in OpenKB, then commit + redeploy — the KB updates infrequently enough (this round was 6 documents over several days) that this is not a burdensome workflow.
-- **Open implementation detail:** the source page images referenced by wiki pages live under OpenKB's `my-kb/.openkb/files/.../images/*.png` and are large (several MB each, full-resolution PDF page renders). Bundling *all* of them would bloat the deployment substantially. The sync script should copy only the images actually referenced from wiki content (grep wiki markdown for image paths, copy just those), and likely downscale/recompress them for web delivery — this needs to be worked out during implementation, not assumed here.
+A sync script (`scripts/sync_kb.py`) copies `wiki/` from the OpenKB project path into `landy_ai/kb/wiki/`, excluding `sources/images/` (see "No image support" above — those files are ~5.9GB and unused by any V6 tool). Run manually after adding/recompiling a document in OpenKB, then commit + redeploy — the KB updates infrequently enough (this round was 6 documents over several days) that this is not a burdensome workflow.
 
 ---
 
@@ -58,12 +56,10 @@ agent/v6/
 │   └── agent_prompt.py        # ported from OpenKB's query-agent search-strategy prompt
 └── tools/
     ├── read_wiki_file.py       # read a markdown file from kb/wiki/
-    ├── get_page_content.py     # page-range content from kb/wiki/sources/*.json (PageIndex docs)
-    └── get_kb_image.py         # emit kb_image SSE event, short text ack to the agent
+    └── get_page_content.py     # page-range content from kb/wiki/sources/*.json (PageIndex docs)
 
 kb/
-├── wiki/
-└── images/
+└── wiki/
 
 scripts/
 └── sync_kb.py
@@ -96,19 +92,7 @@ scripts/
 | `doc_name` | `str` | Document name without extension, e.g. `"PEQ-alam-sekitar"` |
 | `pages` | `str` | Page spec, e.g. `"3-5,7,10-12"` |
 
-**Returns:** Formatted content for the requested pages, or an error string (`"No content found for pages {pages} in {doc_name}."` / `"File not found: sources/{doc_name}.json"`).
-
-### `get_kb_image`
-
-**Purpose:** Show the user a figure or diagram referenced from a wiki page.
-
-**Parameters:**
-
-| Parameter | Type | Notes |
-|---|---|---|
-| `image_path` | `str` | As referenced in wiki content |
-
-**Behavior:** Emits a custom SSE event `{"event": "kb_image", "image_url": "..."}` for the frontend to render, and returns `"Image shown to the user."` to the agent (not the pixels themselves — see Core Design Decisions).
+**Returns:** Formatted content for the requested pages, or an error string (`"No content found for pages {pages} in {doc_name}."` / `"File not found: sources/{doc_name}.json"`). Page content may itself contain an `![image](...)` markdown reference for a scanned page with no text layer — V6 has no tool to resolve these (see "No image support"); the agent works with whatever text is present and does not attempt to view the image.
 
 ---
 
@@ -132,7 +116,6 @@ No `follow_up_chips` / `live_agent_cta` — not applicable to regulatory Q&A (se
 SSE, same line framing as V5 (`data: {json}\n\n`). Events:
 - `{"type": "custom", "data": {"event": "thread_id", "thread_id": ...}}` — announced first, same as V5
 - `{"type": "messages", "data": {"content": "..."}}` — answer tokens
-- `{"type": "custom", "data": {"event": "kb_image", "image_url": ...}}`
 - `{"type": "custom", "data": {"event": "stream_error", "error": ...}}`
 
 After the stream completes, dual-writes to the conversation log via `log_turn(agent_version="v6", ...)`, same best-effort/non-blocking pattern V5 uses.
@@ -158,6 +141,8 @@ After the stream completes, dual-writes to the conversation log via `log_turn(ag
 
 ## Open Questions (carried into implementation, not blocking this spec)
 
-1. **Image bundling strategy** — which images to copy, at what resolution, exact sync-script logic.
-2. **Multimodal tool-output support in `deepagents`** — not investigated; V6's design deliberately avoids depending on it (see `get_kb_image`), so this is informational, not a blocker.
-3. **Follow-up suggestion chips for KB Q&A** — explicitly out of scope now (YAGNI), noted as a plausible future addition.
+1. **Follow-up suggestion chips for KB Q&A** — explicitly out of scope now (YAGNI), noted as a plausible future addition.
+
+## Amendment (2026-08-19)
+
+Image support (`get_kb_image`, `kb/images/`) was dropped after checking the actual generated wiki content — see "No image support" under Core Design Decisions. The original version of this spec included image handling based on an unverified assumption about how much image data was involved; the real figure (~5.9GB) made bundling infeasible, and since images never appear in the primary search path, the feature was cut rather than reached for external storage infrastructure outside this spec's scope.
