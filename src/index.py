@@ -921,3 +921,148 @@ async def v5_admin_conversation(thread_id: str):
     import asyncio as _asyncio
     from utility.conversation_log import get_conversation
     return await _asyncio.to_thread(get_conversation, thread_id)
+
+
+# ─────────────────────────────────────────
+# V6 -- KB Q&A agent (Selangor planning guidelines)
+# ─────────────────────────────────────────
+class V6ChatRequest(BaseModel):
+    message: str
+    thread_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+@app.post("/api/v6/invoke")
+async def invoke_v6(request: V6ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v6/invoke] thread={thread_id}")
+
+    try:
+        from agent.v6.orchestration import create_agent as create_v6_agent
+
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+            agent = create_v6_agent(checkpointer)
+
+            response = await agent.ainvoke(
+                {"messages": request.message},
+                {"configurable": {"thread_id": thread_id}, "recursion_limit": 50},
+                version="v2",
+            )
+
+        output = getattr(response, "value", response)
+        answer = _v5_final_answer(output.get("messages") or [])
+
+        import asyncio as _asyncio
+        from utility.conversation_log import log_turn
+
+        await _asyncio.to_thread(
+            log_turn,
+            session_id=request.session_id,
+            thread_id=thread_id,
+            agent_version="v6",
+            user_message=request.message,
+            answer=answer,
+        )
+
+        return JSONResponse(
+            content={"thread_id": thread_id, "answer": answer, "status": "success"},
+            status_code=200,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[v6/invoke] error: {e}\n{traceback.format_exc()}")
+        return _build_error_response(request, e)
+
+
+@app.post("/api/v6/stream")
+async def stream_v6(request: V6ChatRequest):
+    if not request.message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v6/stream] thread={thread_id}")
+
+    from agent.v6.orchestration import create_agent as _create_v6_agent
+    from utility.conversation_log import log_turn
+
+    def _build_v6_sse_line(payload: dict) -> str:
+        return f"data: {json.dumps(payload, default=str)}\n\n"
+
+    async def _event_generator():
+        try:
+            yield _build_v6_sse_line({
+                "type": "custom", "ns": [],
+                "data": {"event": "thread_id", "thread_id": thread_id},
+            })
+
+            async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+                await checkpointer.setup()
+                agent = _create_v6_agent(checkpointer)
+
+                answer_parts: list = []
+
+                async for raw_event in agent.astream(
+                    {"messages": request.message},
+                    {"configurable": {"thread_id": thread_id}, "recursion_limit": 50},
+                    stream_mode=["updates", "messages", "custom"],
+                    subgraphs=True,
+                    version="v2",
+                ):
+                    if isinstance(raw_event, dict):
+                        type_ = raw_event.get("type")
+                        ns = raw_event.get("ns")
+                        data = raw_event.get("data")
+                    elif isinstance(raw_event, tuple) and len(raw_event) == 3:
+                        first, second, data = raw_event
+                        if isinstance(first, str):
+                            type_, ns = first, second
+                        else:
+                            ns, type_ = first, second
+                    else:
+                        continue
+
+                    if type_ not in ("messages", "custom"):
+                        continue
+
+                    if type_ == "messages" and isinstance(data, tuple) and data:
+                        msg = data[0]
+                        mtype = str(getattr(msg, "type", ""))
+                        if not (mtype == "ai" or mtype.startswith("AIMessage")):
+                            continue
+                        content = _v5_message_text(msg)
+                        if not content:
+                            continue
+                        answer_parts.append(content)
+                        data = {"content": content}
+
+                    event = {"type": type_, "ns": list(ns) if ns else [], "data": data}
+                    yield _build_v6_sse_line(event)
+
+                import asyncio as _asyncio
+                await _asyncio.to_thread(
+                    log_turn,
+                    session_id=request.session_id,
+                    thread_id=thread_id,
+                    agent_version="v6",
+                    user_message=request.message,
+                    answer="".join(answer_parts),
+                )
+
+        except Exception as e:
+            logger.error(f"[v6/stream] error: {e}\n{traceback.format_exc()}")
+            yield _build_v6_sse_line({
+                "type": "custom", "ns": [],
+                "data": {"event": "stream_error", "error": str(e)},
+            })
+
+    return _StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
