@@ -8,3 +8,6 @@ test.py
 __pycache__/
 # local conversation exports (contain user data)
 conversations_export*.jsonl
+
+# isolated worktrees for subagent-driven development
+.worktrees/
