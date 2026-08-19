@@ -34,11 +34,15 @@ def get_page_content(doc_name: str, pages: str) -> str:
     target = (KB_ROOT / "sources" / f"{doc_name}.json").resolve()
     if not target.is_relative_to(KB_ROOT):
         return "Access denied: path escapes wiki root."
-    if not target.exists():
+    if not target.is_file():
         return f"File not found: sources/{doc_name}.json"
 
+    try:
+        requested = set(parse_pages(pages))
+    except ValueError:
+        return f"Invalid page specification: {pages}"
+
     data = json.loads(target.read_text(encoding="utf-8"))
-    requested = set(parse_pages(pages))
     matches = [entry for entry in data if entry.get("page") in requested]
 
     if not matches:
