@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a new, separate agent (`agent/v6/`) and API endpoints (`POST /api/v6/invoke`, `POST /api/v6/stream`) that answer Selangor industrial planning-guideline questions by reading a bundled copy of the OpenKB wiki, following the same construction/auth/logging/streaming patterns already established by V5.
+**Goal:** Add a new, separate agent (`agent/v6/`) and API endpoints (`POST /api/v6/invoke`, `POST /api/v6/stream`) that answer Selangor industrial planning-guideline questions by reading a bundled copy of the OpenKB wiki, following the same construction/auth/logging/streaming/testing patterns already established by V5.
 
 **Architecture:** Two read-only LangChain tools (`read_wiki_file`, `get_page_content`) read a markdown+JSON snapshot of the OpenKB wiki bundled into the repo at `kb/wiki/`. A `deepagents.create_deep_agent` wraps them with a search-strategy system prompt (read `index.md` → summaries → concept/entity pages → raw source only if needed) and the existing Postgres checkpointer. Two FastAPI routes expose it exactly like V5's `/invoke`/`/stream` pair, reusing V5's existing helper functions, auth, and conversation logging.
 
-**Tech Stack:** FastAPI, LangChain (`@tool`), `deepagents.create_deep_agent`, `langgraph-checkpoint-postgres` (`AsyncPostgresSaver`), existing `utility/llm_init.py` (Vercel AI Gateway), existing `utility/conversation_log.py` (MongoDB), pytest (already a declared dependency, currently unused).
+**Tech Stack:** FastAPI, LangChain (`@tool`), `deepagents.create_deep_agent`, `langgraph-checkpoint-postgres` (`AsyncPostgresSaver`), existing `utility/llm_init.py` (Vercel AI Gateway), existing `utility/conversation_log.py` (MongoDB), pytest (already used by the `tests/v4/`, `tests/v5/` suites).
 
 **Spec:** `docs/superpowers/specs/2026-08-19-agent-v6-design.md`
 
@@ -20,27 +20,45 @@
 - No vector DB, no embeddings, no semantic search layer — pure agentic file reads, matching both OpenKB's own design and V5's stated "no semantic layer" philosophy.
 - No image support — the wiki's summary/concept/entity pages contain zero image references (verified); images only appear in raw per-page JSON and total ~5.9GB, not bundleable. Not building `get_kb_image`.
 - No follow-up-chip / live-agent-CTA extraction — that concept is V5-specific (transaction intent) and doesn't apply here.
+- **Test layout and style must match the established `tests/v4/`, `tests/v5/` convention** (discovered during pre-flight setup, not in the original spec): flat `tests/v6/test_*.py` files (not nested under `tests/agent/v6/...`), each with an `__init__.py`, each test file bootstrapping `sys.path` manually:
+  ```python
+  import sys
+  from pathlib import Path
+  ROOT = Path(__file__).resolve().parents[2]
+  if str(ROOT) not in sys.path:
+      sys.path.insert(0, str(ROOT))
+  ```
+  Orchestration tests mock `create_deep_agent` and `load_llm` via `monkeypatch.setattr("agent.v6.orchestration.<name>", ...)` and assert on captured kwargs — see `tests/v5/test_orchestration.py` for the exact pattern this plan's Task 4 follows.
 
 ---
 
 ## Task 1: KB sync script + initial content sync
 
 **Files:**
-- Create: `scripts/__init__.py` (empty)
-- Create: `scripts/sync_kb.py`
-- Create: `tests/scripts/test_sync_kb.py`
+- Create: `scripts/sync_kb.py` (no `__init__.py` — the existing `scripts/backfill_conversations.py` and `scripts/extract_conversations.py` have none either; `scripts/` is not a package in this codebase)
+- Create: `tests/v6/__init__.py` (empty)
+- Create: `tests/v6/test_sync_kb.py`
 - Create (generated, not hand-written): `kb/wiki/` — the actual synced snapshot
 
 **Interfaces:**
-- Produces: `sync_kb(source: Path, dest: Path) -> None` — used only by this task and by future manual re-syncs; no other task imports it.
+- Produces: `sync_kb(source: Path, dest: Path) -> None` in `scripts/sync_kb.py` — used only by this task and by future manual re-syncs; no other task imports it.
 - Produces: the `kb/wiki/` directory on disk, which Task 2 and Task 3's tools read via `agent.v6.config.KB_ROOT`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/scripts/test_sync_kb.py`:
+Create `tests/v6/__init__.py` (empty file).
+
+Create `tests/v6/test_sync_kb.py`:
 
 ```python
-from scripts.sync_kb import sync_kb
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import scripts.sync_kb as sync_kb_module
 
 
 def test_sync_copies_wiki_excluding_images(tmp_path):
@@ -54,7 +72,7 @@ def test_sync_copies_wiki_excluding_images(tmp_path):
     (source / "sources" / "doc.json").write_text("[]", encoding="utf-8")
     (source / "index.md").write_text("# Index", encoding="utf-8")
 
-    sync_kb(source, dest)
+    sync_kb_module.sync_kb(source, dest)
 
     assert (dest / "index.md").read_text(encoding="utf-8") == "# Index"
     assert (dest / "summaries" / "doc.md").exists()
@@ -71,7 +89,7 @@ def test_sync_replaces_existing_dest(tmp_path):
     dest.mkdir()
     (dest / "stale.md").write_text("old file that should be removed", encoding="utf-8")
 
-    sync_kb(source, dest)
+    sync_kb_module.sync_kb(source, dest)
 
     assert (dest / "index.md").read_text(encoding="utf-8") == "new content"
     assert not (dest / "stale.md").exists()
@@ -81,17 +99,15 @@ def test_sync_raises_if_source_missing(tmp_path):
     import pytest
 
     with pytest.raises(FileNotFoundError):
-        sync_kb(tmp_path / "does-not-exist", tmp_path / "dest")
+        sync_kb_module.sync_kb(tmp_path / "does-not-exist", tmp_path / "dest")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run (from the `landy_ai` repo root): `python -m pytest tests/scripts/test_sync_kb.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'scripts'` (or `scripts.sync_kb`).
+Run (from the `landy_ai` repo root): `python -m pytest tests/v6/test_sync_kb.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'scripts.sync_kb'`.
 
 - [ ] **Step 3: Write minimal implementation**
-
-Create `scripts/__init__.py` (empty file).
 
 Create `scripts/sync_kb.py`:
 
@@ -137,7 +153,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/scripts/test_sync_kb.py -v`
+Run: `python -m pytest tests/v6/test_sync_kb.py -v`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Run the real sync to produce the initial `kb/wiki/` snapshot**
@@ -152,7 +168,7 @@ Expected: roughly 700-800 KB (matches the ~745KB measured for the source wiki mi
 - [ ] **Step 6: Commit**
 
 ```bash
-git add scripts/__init__.py scripts/sync_kb.py tests/scripts/test_sync_kb.py kb/wiki
+git add scripts/sync_kb.py tests/v6/__init__.py tests/v6/test_sync_kb.py kb/wiki
 git commit -m "feat(v6): add KB sync script and initial wiki snapshot"
 ```
 
@@ -165,7 +181,7 @@ git commit -m "feat(v6): add KB sync script and initial wiki snapshot"
 - Create: `agent/v6/config.py`
 - Create: `agent/v6/tools/__init__.py` (empty)
 - Create: `agent/v6/tools/read_wiki_file.py`
-- Test: `tests/agent/v6/tools/test_read_wiki_file.py`
+- Test: `tests/v6/test_read_wiki_file.py`
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
@@ -174,18 +190,24 @@ git commit -m "feat(v6): add KB sync script and initial wiki snapshot"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/agent/v6/tools/test_read_wiki_file.py`:
+Create `tests/v6/test_read_wiki_file.py`:
 
 ```python
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import agent.v6.tools.read_wiki_file as read_wiki_file_module
-from agent.v6.tools.read_wiki_file import read_wiki_file
 
 
 def test_reads_existing_file(tmp_path, monkeypatch):
     (tmp_path / "index.md").write_text("# KB Index", encoding="utf-8")
     monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
 
-    result = read_wiki_file.invoke({"path": "index.md"})
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "index.md"})
 
     assert result == "# KB Index"
 
@@ -197,7 +219,9 @@ def test_reads_nested_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
 
-    result = read_wiki_file.invoke({"path": "concepts/buffer-zone-requirements.md"})
+    result = read_wiki_file_module.read_wiki_file.invoke(
+        {"path": "concepts/buffer-zone-requirements.md"}
+    )
 
     assert result == "# Buffer Zones"
 
@@ -205,7 +229,7 @@ def test_reads_nested_file(tmp_path, monkeypatch):
 def test_missing_file_returns_message(tmp_path, monkeypatch):
     monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
 
-    result = read_wiki_file.invoke({"path": "nope.md"})
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "nope.md"})
 
     assert result == "File not found: nope.md"
 
@@ -213,14 +237,14 @@ def test_missing_file_returns_message(tmp_path, monkeypatch):
 def test_path_escape_denied(tmp_path, monkeypatch):
     monkeypatch.setattr(read_wiki_file_module, "KB_ROOT", tmp_path)
 
-    result = read_wiki_file.invoke({"path": "../../etc/passwd"})
+    result = read_wiki_file_module.read_wiki_file.invoke({"path": "../../etc/passwd"})
 
     assert result == "Access denied: path escapes wiki root."
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/agent/v6/tools/test_read_wiki_file.py -v`
+Run: `python -m pytest tests/v6/test_read_wiki_file.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'agent.v6'`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -268,7 +292,7 @@ def read_wiki_file(path: str) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/agent/v6/tools/test_read_wiki_file.py -v`
+Run: `python -m pytest tests/v6/test_read_wiki_file.py -v`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Sanity-check against the real bundled KB**
@@ -285,7 +309,7 @@ Expected: prints the start of the real `index.md` content (document/concept/enti
 - [ ] **Step 6: Commit**
 
 ```bash
-git add agent/v6/__init__.py agent/v6/config.py agent/v6/tools/__init__.py agent/v6/tools/read_wiki_file.py tests/agent/v6/tools/test_read_wiki_file.py
+git add agent/v6/__init__.py agent/v6/config.py agent/v6/tools/__init__.py agent/v6/tools/read_wiki_file.py tests/v6/test_read_wiki_file.py
 git commit -m "feat(v6): add read_wiki_file tool"
 ```
 
@@ -295,7 +319,7 @@ git commit -m "feat(v6): add read_wiki_file tool"
 
 **Files:**
 - Create: `agent/v6/tools/get_page_content.py`
-- Test: `tests/agent/v6/tools/test_get_page_content.py`
+- Test: `tests/v6/test_get_page_content.py`
 
 **Interfaces:**
 - Consumes: `agent.v6.config.KB_ROOT` (Task 2).
@@ -304,21 +328,26 @@ git commit -m "feat(v6): add read_wiki_file tool"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/agent/v6/tools/test_get_page_content.py`:
+Create `tests/v6/test_get_page_content.py`:
 
 ```python
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import agent.v6.tools.get_page_content as get_page_content_module
-from agent.v6.tools.get_page_content import get_page_content, parse_pages
 
 
 def test_parse_pages_handles_ranges_and_singles():
-    assert parse_pages("3-5,7,10-12") == [3, 4, 5, 7, 10, 11, 12]
+    assert get_page_content_module.parse_pages("3-5,7,10-12") == [3, 4, 5, 7, 10, 11, 12]
 
 
 def test_parse_pages_dedupes_and_sorts():
-    assert parse_pages("5,3,4-5,3") == [3, 4, 5]
+    assert get_page_content_module.parse_pages("5,3,4-5,3") == [3, 4, 5]
 
 
 def test_returns_matching_page_content(tmp_path, monkeypatch):
@@ -332,7 +361,9 @@ def test_returns_matching_page_content(tmp_path, monkeypatch):
     ]
     (sources_dir / "test-doc.json").write_text(json.dumps(doc), encoding="utf-8")
 
-    result = get_page_content.invoke({"doc_name": "test-doc", "pages": "1,3"})
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "test-doc", "pages": "1,3"}
+    )
 
     assert "Page one text" in result
     assert "Page three text" in result
@@ -342,7 +373,9 @@ def test_returns_matching_page_content(tmp_path, monkeypatch):
 def test_missing_document_returns_message(tmp_path, monkeypatch):
     monkeypatch.setattr(get_page_content_module, "KB_ROOT", tmp_path)
 
-    result = get_page_content.invoke({"doc_name": "nope", "pages": "1"})
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "nope", "pages": "1"}
+    )
 
     assert result == "File not found: sources/nope.json"
 
@@ -355,14 +388,16 @@ def test_no_matching_pages_returns_message(tmp_path, monkeypatch):
         json.dumps([{"page": 1, "content": "x"}]), encoding="utf-8"
     )
 
-    result = get_page_content.invoke({"doc_name": "test-doc", "pages": "99"})
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "test-doc", "pages": "99"}
+    )
 
     assert result == "No content found for pages 99 in test-doc."
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/agent/v6/tools/test_get_page_content.py -v`
+Run: `python -m pytest tests/v6/test_get_page_content.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'agent.v6.tools.get_page_content'`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -422,7 +457,7 @@ def get_page_content(doc_name: str, pages: str) -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/agent/v6/tools/test_get_page_content.py -v`
+Run: `python -m pytest tests/v6/test_get_page_content.py -v`
 Expected: PASS (5 tests).
 
 - [ ] **Step 5: Sanity-check against the real bundled KB**
@@ -439,7 +474,7 @@ Expected: prints `--- Page 1 ---` followed by the page-1 content of the real `PE
 - [ ] **Step 6: Commit**
 
 ```bash
-git add agent/v6/tools/get_page_content.py tests/agent/v6/tools/test_get_page_content.py
+git add agent/v6/tools/get_page_content.py tests/v6/test_get_page_content.py
 git commit -m "feat(v6): add get_page_content tool"
 ```
 
@@ -451,34 +486,103 @@ git commit -m "feat(v6): add get_page_content tool"
 - Create: `agent/v6/prompt/__init__.py` (empty)
 - Create: `agent/v6/prompt/agent_prompt.py`
 - Create: `agent/v6/orchestration.py`
-- Test: `tests/agent/v6/test_orchestration.py`
+- Test: `tests/v6/test_orchestration.py`
 
 **Interfaces:**
 - Consumes: `agent.v6.config.DEFAULT_MODEL` (Task 2), `agent.v6.tools.read_wiki_file.read_wiki_file` (Task 2), `agent.v6.tools.get_page_content.get_page_content` (Task 3), `utility.llm_init.load_llm(model: str) -> ChatOpenAI` (existing).
 - Produces: `agent.v6.orchestration.create_agent(checkpointer) -> CompiledGraph` — consumed by Task 5's FastAPI routes.
 
+This task's test follows `tests/v5/test_orchestration.py`'s established pattern exactly: mock `create_deep_agent` and `load_llm` at their `agent.v6.orchestration.*` import sites, capture the kwargs `create_deep_agent` was called with, and assert on them. Real integration (does the actual `deepagents` + real `load_llm` + real tools work together) is verified manually in Task 5 against a running server, not here — matching how V5 also has no separate "real create_deep_agent" smoke test.
+
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/agent/v6/test_orchestration.py`:
+Create `tests/v6/test_orchestration.py`:
 
 ```python
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
-from agent.v6.orchestration import create_agent
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
-def test_create_agent_builds_without_error(monkeypatch):
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-key")
-    fake_checkpointer = MagicMock()
+def test_create_agent_returns_agent(monkeypatch):
+    mock_agent = MagicMock()
+    monkeypatch.setattr("agent.v6.orchestration.create_deep_agent", lambda **kw: mock_agent)
+    monkeypatch.setattr("agent.v6.orchestration.load_llm", lambda model, **kw: MagicMock())
 
-    agent = create_agent(fake_checkpointer)
+    from agent.v6.orchestration import create_agent
+    result = create_agent(MagicMock())
 
-    assert agent is not None
+    assert result is mock_agent
+
+
+def test_create_agent_passes_two_tools(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "agent.v6.orchestration.create_deep_agent",
+        lambda **kw: captured.update(kw) or MagicMock(),
+    )
+    monkeypatch.setattr("agent.v6.orchestration.load_llm", lambda model, **kw: MagicMock())
+
+    from agent.v6.orchestration import create_agent
+    create_agent(MagicMock())
+
+    assert len(captured["tools"]) == 2
+
+
+def test_create_agent_uses_default_model(monkeypatch):
+    captured = {}
+
+    def fake_load_llm(model, **kwargs):
+        captured["model"] = model
+        return MagicMock()
+
+    monkeypatch.setattr("agent.v6.orchestration.create_deep_agent", lambda **kw: MagicMock())
+    monkeypatch.setattr("agent.v6.orchestration.load_llm", fake_load_llm)
+
+    from agent.v6.orchestration import create_agent
+    from agent.v6.config import DEFAULT_MODEL
+    create_agent(MagicMock())
+
+    assert captured["model"] == DEFAULT_MODEL
+
+
+def test_create_agent_passes_checkpointer(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "agent.v6.orchestration.create_deep_agent",
+        lambda **kw: captured.update(kw) or MagicMock(),
+    )
+    monkeypatch.setattr("agent.v6.orchestration.load_llm", lambda model, **kw: MagicMock())
+
+    from agent.v6.orchestration import create_agent
+    fake_cp = MagicMock()
+    create_agent(fake_cp)
+
+    assert captured["checkpointer"] is fake_cp
+
+
+def test_create_agent_passes_system_prompt(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        "agent.v6.orchestration.create_deep_agent",
+        lambda **kw: captured.update(kw) or MagicMock(),
+    )
+    monkeypatch.setattr("agent.v6.orchestration.load_llm", lambda model, **kw: MagicMock())
+
+    from agent.v6.orchestration import create_agent
+    from agent.v6.prompt.agent_prompt import AGENT_PROMPT
+    create_agent(MagicMock())
+
+    assert captured["system_prompt"] == AGENT_PROMPT
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/agent/v6/test_orchestration.py -v`
+Run: `python -m pytest tests/v6/test_orchestration.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'agent.v6.orchestration'`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -547,18 +651,18 @@ def create_agent(checkpointer):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/agent/v6/test_orchestration.py -v`
-Expected: PASS (1 test).
+Run: `python -m pytest tests/v6/test_orchestration.py -v`
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Run the full V6 test suite together**
 
-Run: `python -m pytest tests/scripts tests/agent/v6 -v`
-Expected: all tests from Tasks 1-4 PASS (13 tests total).
+Run: `python -m pytest tests/v6 -v`
+Expected: all tests from Tasks 1-4 PASS (17 tests total: 3 sync_kb + 4 read_wiki_file + 5 get_page_content + 5 orchestration).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add agent/v6/prompt/__init__.py agent/v6/prompt/agent_prompt.py agent/v6/orchestration.py tests/agent/v6/test_orchestration.py
+git add agent/v6/prompt/__init__.py agent/v6/prompt/agent_prompt.py agent/v6/orchestration.py tests/v6/test_orchestration.py
 git commit -m "feat(v6): add agent prompt and orchestration"
 ```
 
@@ -573,9 +677,13 @@ git commit -m "feat(v6): add agent prompt and orchestration"
 - Consumes: `agent.v6.orchestration.create_agent(checkpointer)` (Task 4), plus already-existing `src/index.py` helpers: `_get_thread_id`, `_build_error_response`, `_v5_final_answer`, `_v5_message_text`, `AsyncPostgresSaver`, `DB_URI`, `_StreamingResponse`, `logger`, `json`, `traceback`, and `utility.conversation_log.log_turn` (existing).
 - Produces: `POST /api/v6/invoke`, `POST /api/v6/stream` — no other task consumes these; they are the final deliverable.
 
-This task has no automated test — it needs a live Postgres connection (`DB_URI`) and a live AI Gateway key, neither of which any existing test in this codebase mocks (no automated test infra covers `/invoke`/`/stream` for V3, V4, or V5 either — this matches established practice, not a gap introduced here). Verification is manual, via a locally running server.
+This task has no automated test — it needs a live Postgres connection (`DB_URI`) and a live AI Gateway key, neither of which any existing test in this codebase mocks (`tests/v4/test_api_v4.py` and `tests/v5/test_api_v5.py` do not exist as live-server tests either — check their actual content during implementation; if they turn out to test the route handlers directly with mocked dependencies, follow that pattern instead of skipping automated coverage here). Verification is manual, via a locally running server, unless the implementer finds an existing route-testing pattern worth mirroring.
 
-- [ ] **Step 1: Add the V6 request model and routes**
+- [ ] **Step 1: Check for an existing route-testing pattern before writing the endpoints**
+
+Read `tests/v4/test_api_v4.py` and `tests/v5/test_api_v5.py` in full. If they test FastAPI route handlers directly (e.g. via `fastapi.testclient.TestClient` or by importing and calling the route functions with mocked dependencies), write equivalent tests for `/api/v6/invoke` and `/api/v6/stream` in `tests/v6/test_api_v6.py` following that exact pattern, and add that file to this task's Files/commit list. If those files test something else entirely (e.g. only helper functions, not the routes), proceed to manual verification as originally planned and note in the task report which case applied.
+
+- [ ] **Step 2: Add the V6 request model and routes**
 
 Open `src/index.py`. After the last function in the file (`v5_admin_conversation`, the `/api/v5/admin/conversation` handler), append:
 
@@ -725,7 +833,7 @@ async def stream_v6(request: V6ChatRequest):
     )
 ```
 
-- [ ] **Step 2: Start the server locally**
+- [ ] **Step 3: Start the server locally**
 
 Run: `uvicorn src.index:app --reload --port 8000`
 
@@ -733,7 +841,7 @@ Requires `DB_URI` (Postgres) and `AI_GATEWAY_API_KEY` set in `.env` — these al
 
 Expected: server starts without import errors; `GET http://localhost:8000/health` returns `{"status": "ok"}`.
 
-- [ ] **Step 3: Verify `/api/v6/invoke` with a real planning-guideline question**
+- [ ] **Step 4: Verify `/api/v6/invoke` with a real planning-guideline question**
 
 Run:
 ```bash
@@ -744,7 +852,7 @@ curl -s -X POST http://localhost:8000/api/v6/invoke \
 
 Expected: JSON response with `"status": "success"` and an `"answer"` field that specifically states the buffer distance for medium industry (150m, per the KB content verified during OpenKB construction) — not a generic non-answer. If `LANDY_API_SECRET` is set in the environment, add `-H "x-landy-key: <the secret>"` to the command.
 
-- [ ] **Step 4: Verify `/api/v6/stream` produces SSE events**
+- [ ] **Step 5: Verify `/api/v6/stream` produces SSE events**
 
 Run:
 ```bash
@@ -755,33 +863,35 @@ curl -s -N -X POST http://localhost:8000/api/v6/stream \
 
 Expected: a stream of `data: {...}\n\n` lines — first a `thread_id` custom event, then `messages` events carrying answer tokens, ending cleanly (no `stream_error` event) with an answer that references Act 446 / worker housing specifics.
 
-- [ ] **Step 5: Verify multi-turn continuity**
+- [ ] **Step 6: Verify multi-turn continuity**
 
-Take the `thread_id` from Step 3's response and send a follow-up on the same thread:
+Take the `thread_id` from Step 4's response and send a follow-up on the same thread:
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v6/invoke \
   -H "Content-Type: application/json" \
-  -d '{"message": "What about for light industry instead?", "thread_id": "<thread_id from step 3>"}'
+  -d '{"message": "What about for light industry instead?", "thread_id": "<thread_id from step 4>"}'
 ```
 
 Expected: the answer correctly interprets "instead" as still asking about buffer-zone distance (light industry: 50m), showing the Postgres checkpointer preserved conversation context.
 
-- [ ] **Step 6: Verify conversation logging**
+- [ ] **Step 7: Verify conversation logging**
 
 Run:
 ```bash
-curl -s "http://localhost:8000/api/v5/admin/conversation?thread_id=<thread_id from step 3>"
+curl -s "http://localhost:8000/api/v5/admin/conversation?thread_id=<thread_id from step 4>"
 ```
 
 Expected: returns the logged turns for that thread, each with `user_message` and `answer` populated — confirms V6 turns are landing in the same `landy_conversations` collection via `log_turn(agent_version="v6", ...)`.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/index.py
 git commit -m "feat(v6): add /api/v6/invoke and /api/v6/stream endpoints"
 ```
+
+(Add any `tests/v6/test_api_v6.py` from Step 1 to this commit too, if written.)
 
 ---
 
@@ -793,7 +903,7 @@ git commit -m "feat(v6): add /api/v6/invoke and /api/v6/stream endpoints"
 
 Push the current branch (or open a PR per the project's normal flow) so Vercel builds a preview deployment. Confirm `kb/wiki/` is present at build time (it's a real committed directory, not gitignored — no `.vercelignore` entry excludes it per the current repo state).
 
-- [ ] **Step 2: Re-run Task 5's Step 3 curl verification against the deployed URL**
+- [ ] **Step 2: Re-run Task 5's Step 4 curl verification against the deployed URL**
 
 ```bash
 curl -s -X POST https://<preview-url>/api/v6/invoke \
@@ -806,4 +916,4 @@ Expected: same correct, specific answer as the local run. This confirms `agent.v
 
 - [ ] **Step 3: If `KB_ROOT` resolution fails on Vercel**
 
-If Step 2 returns a "File not found" for `index.md` specifically (not a planning-guideline miss, but the tool itself failing), the deployed function's filesystem layout differs from local. Debug by temporarily adding a diagnostic: call `read_wiki_file.invoke({"path": "."})` is not valid (it's a file read, not a listing) -- instead check `agent.v6.config.KB_ROOT` and `KB_ROOT.exists()` via a scratch print in a `GET /health`-adjacent debug path, or check Vercel's function logs for the resolved path. This is a genuine open risk flagged in Task 5's design (see spec's file-structure section) -- not expected to fail, but not verified against a real Vercel Python deployment before this plan was written.
+If Step 2 returns a "File not found" for `index.md` specifically (not a planning-guideline miss, but the tool itself failing), the deployed function's filesystem layout differs from local. Debug by checking Vercel's function logs for the resolved `KB_ROOT` path, or temporarily add a diagnostic print of `agent.v6.config.KB_ROOT` and `KB_ROOT.exists()`. This is a genuine open risk flagged in the spec — not expected to fail, but not verified against a real Vercel Python deployment before this plan was written.
