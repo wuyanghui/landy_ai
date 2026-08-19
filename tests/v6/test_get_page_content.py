@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -115,3 +117,38 @@ def test_oversized_page_range_returns_message(tmp_path, monkeypatch):
     )
 
     assert result == "Invalid page specification: 1-10000"
+
+
+def test_pathological_huge_range_is_rejected_without_hanging(tmp_path, monkeypatch):
+    # A single range spanning ~100 million pages must be rejected instantly by
+    # the O(1) span check in parse_pages, before any range()/set expansion is
+    # attempted. If the cap regressed back to a post-hoc check, this would
+    # hang/OOM instead of returning promptly.
+    monkeypatch.setattr(get_page_content_module, "KB_ROOT", tmp_path)
+    sources_dir = tmp_path / "sources"
+    sources_dir.mkdir()
+    doc = [{"page": 1, "content": "Page one text"}]
+    (sources_dir / "test-doc.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "test-doc", "pages": "1-100000000"}
+    )
+
+    assert result == "Invalid page specification: 1-100000000"
+
+
+def test_parse_pages_raises_for_oversized_range():
+    with pytest.raises(ValueError):
+        get_page_content_module.parse_pages("1-100000000")
+
+
+def test_missing_document_not_found_message_not_double_suffixed(tmp_path, monkeypatch):
+    # doc_name already carries a "sources/" prefix and ".json" suffix; the
+    # not-found message must use the normalized name, not double it up.
+    monkeypatch.setattr(get_page_content_module, "KB_ROOT", tmp_path)
+
+    result = get_page_content_module.get_page_content.invoke(
+        {"doc_name": "sources/typo.json", "pages": "1"}
+    )
+
+    assert result == "File not found: sources/typo.json"

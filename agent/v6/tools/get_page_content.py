@@ -10,7 +10,14 @@ MAX_PAGES = 200
 
 
 def parse_pages(pages: str) -> list[int]:
-    """Parse a page spec like "3-5,7,10-12" into a sorted, deduped list of page numbers."""
+    """Parse a page spec like "3-5,7,10-12" into a sorted, deduped list of page numbers.
+
+    Raises:
+        ValueError: If a segment isn't a valid integer or range, or if a
+            "start-end" range's span exceeds MAX_PAGES (checked before the
+            range is expanded, so a pathological span like "1-100000000"
+            never triggers a huge in-memory allocation).
+    """
     result: set[int] = set()
     for part in pages.split(","):
         part = part.strip()
@@ -18,7 +25,10 @@ def parse_pages(pages: str) -> list[int]:
             continue
         if "-" in part:
             start_str, end_str = part.split("-", 1)
-            result.update(range(int(start_str), int(end_str) + 1))
+            start, end = int(start_str), int(end_str)
+            if end - start + 1 > MAX_PAGES:
+                raise ValueError(f"Page range too large: {part}")
+            result.update(range(start, end + 1))
         else:
             result.add(int(part))
     return sorted(result)
@@ -45,7 +55,7 @@ def get_page_content(doc_name: str, pages: str) -> str:
     if not target.is_relative_to(KB_ROOT):
         return "Access denied: path escapes wiki root."
     if not target.is_file():
-        return f"File not found: sources/{doc_name}.json"
+        return f"File not found: sources/{normalized_doc_name}.json"
 
     try:
         requested = set(parse_pages(pages))
