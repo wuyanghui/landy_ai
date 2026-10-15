@@ -11,3 +11,4 @@ conversations_export*.jsonl
 
 # isolated worktrees for subagent-driven development
 .worktrees/
+.claude/
