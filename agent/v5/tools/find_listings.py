@@ -122,12 +122,15 @@ def _build_filters(
         filters["traits.building.ceiling_height_m"] = {"$gte": ceiling_height_min}
     if floor_loading_min is not None:
         filters["traits.industrial.floor_loading_kn_m2"] = {"$gte": floor_loading_min}
+    # Use Google-Maps DRIVE distance (location.nearest.*.drive_distance_km) so the
+    # "near port/highway/airport" filter matches the website's /api/search exactly
+    # — straight-line distance_km would return a wider set than the overflow link.
     if max_highway_km is not None:
-        filters["location.nearest.highway.distance_km"] = {"$lte": max_highway_km}
+        filters["location.nearest.highway.drive_distance_km"] = {"$lte": max_highway_km}
     if max_port_km is not None:
-        filters["location.nearest.port.distance_km"] = {"$lte": max_port_km}
+        filters["location.nearest.port.drive_distance_km"] = {"$lte": max_port_km}
     if max_airport_km is not None:
-        filters["location.nearest.airport.distance_km"] = {"$lte": max_airport_km}
+        filters["location.nearest.airport.drive_distance_km"] = {"$lte": max_airport_km}
 
     return filters
 
@@ -249,8 +252,13 @@ async def find_listings(
         return list(dict.fromkeys(r[key] for r in results if r.get(key)))
 
     location_breakdown = _unique("city")
+    # Echo the EXPANDED categories actually queried (e.g. "factory" → every factory
+    # subtype) so the overflow link the agent builds from filters_applied reproduces
+    # total_found. The website's /api/search matches main_category literally and does
+    # NOT expand "factory", so emitting the bare input would under-count the page.
+    expanded_categories = expand_property_category(property_category) if property_category else []
     filters_summary = ", ".join(filter(None, [
-        f"category={','.join(property_category)}" if property_category else None,
+        f"category={','.join(expanded_categories)}" if expanded_categories else None,
         f"locality={locality}" if locality else None,
         f"region={region}" if region else None,
         f"price_max={price_max}" if price_max else None,
