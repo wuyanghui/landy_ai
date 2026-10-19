@@ -198,7 +198,7 @@ async def chat_endpoint(request: ChatSlugRequestDict):
                 get_property_by_slug = get_property_listing_collections().find_one({"slug": slug})
                 slug_agent = create_agent(
                     system_prompt=get_slug_prompt(get_property_by_slug),
-                    model=load_llm(model="openai/gpt-5.4-mini"),
+                    model=load_llm(model="anthropic/claude-haiku-5.5"),
                     checkpointer=checkpointer,
                 )
                 logger.info("Agent created successfully")
@@ -327,7 +327,7 @@ async def chat_endpoint(request: ChatRequestDict):
                 tools = [search_listing_property_from_database]
                 agent = create_agent(
                     system_prompt=prompt,
-                    model=load_llm(model="openai/gpt-5.4-mini").bind_tools(tools),
+                    model=load_llm(model="anthropic/claude-haiku-5.5").bind_tools(tools),
                     tools=tools,
                     checkpointer=checkpointer,
                 )

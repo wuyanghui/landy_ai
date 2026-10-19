@@ -7,7 +7,7 @@ load_dotenv()
 client = OpenAI()
 openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
-def load_llm(model = "openai/gpt-5.4-mini", **kwargs):
+def load_llm(model = "anthropic/claude-haiku-5.5", **kwargs):
     base_params = {
         "model": model,
         "api_key": os.getenv("AI_GATEWAY_API_KEY"),
