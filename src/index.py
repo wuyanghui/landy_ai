@@ -261,7 +261,82 @@ async def chat_endpoint(request: ChatSlugRequestDict):
         }
         
         return JSONResponse(content=error_response, status_code=500)
-        
+
+
+# ─────────────────────────────────────────
+# POST /api/v2/invoke/market
+# The Landy Insights price pages' chat: like /invoke/slug, but the page is a
+# price page (class + path) read from IndustrialProp's public market API, and
+# the agent can look up any other place's prices with read-only tools.
+# ─────────────────────────────────────────
+class ChatMarketRequest(BaseModel):
+    message: str
+    property_class: str
+    path: str = ""
+    thread_id: Optional[str] = None
+
+
+MARKET_REFERRAL_AFTER = 3
+
+
+def _market_referral(messages: list, answer: str) -> bool:
+    visitor_turns = sum(1 for m in messages if str(getattr(m, "type", "")) == "human")
+    return visitor_turns >= MARKET_REFERRAL_AFTER or "Jay Kew" in answer
+
+
+@app.post("/api/v2/invoke/market")
+async def invoke_market(request: ChatMarketRequest):
+    from agent.market import data as market_data
+    from agent.market import orchestration as market_orchestration
+
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message is required")
+    try:
+        cls = market_data.property_class(request.property_class)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    thread_id = _get_thread_id(request)
+    logger.info(f"[v2/invoke/market] thread={thread_id} page={cls}:{request.path}")
+    try:
+        page = market_data.fetch_page(cls, request.path)
+    except market_data.MarketApiError as exc:
+        logger.error(f"[v2/invoke/market] market API failed: {exc}")
+        raise HTTPException(status_code=502, detail="Price data is unavailable right now")
+    if page is None:
+        raise HTTPException(status_code=404, detail=f"No {cls} price page at '{request.path}'")
+
+    try:
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            await checkpointer.setup()
+            agent = market_orchestration.create_market_agent(page, checkpointer)
+            response = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": request.message}]},
+                {"configurable": {"thread_id": thread_id}},
+            )
+        output = getattr(response, "value", response)
+        messages = output.get("messages") or []
+        answer = _v5_final_answer(messages)
+        return JSONResponse(
+            content={
+                "thread_id": thread_id,
+                "graph_output": answer,
+                "follow_up_suggestions": [],
+                # The chat shows its contact card (once) on the visitor's 3rd message, or when the answer offers Jay.
+                "agent_referral_shown": _market_referral(messages, answer),
+                "status": "success",
+            },
+            status_code=200,
+        )
+    except Exception as e:
+        # Logged in full here; the visitor's browser gets no traceback.
+        logger.error(f"[v2/invoke/market] error: {e}\n{traceback.format_exc()}")
+        return JSONResponse(
+            content={"thread_id": thread_id, "status": "error", "error": "The price chat failed; please try again."},
+            status_code=500,
+        )
+
+
 @app.post("/api/v2/invoke")
 async def chat_endpoint(request: ChatRequestDict):
     """
